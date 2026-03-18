@@ -15,6 +15,8 @@ const envSchema = z.object({
   JACKETT_BASE_URL: z.url().optional(),
   JACKETT_API_KEY: z.string().min(1).optional(),
   JACKETT_INDEXER: z.string().min(1).default("all"),
+  JACKETT_MIN_SEEDERS: z.coerce.number().int().nonnegative().default(8),
+  JACKETT_MIN_PEERS: z.coerce.number().int().nonnegative().default(8),
   QBITTORRENT_BASE_URL: z.url().optional(),
   QBITTORRENT_USERNAME: z.string().min(1).optional(),
   QBITTORRENT_PASSWORD: z.string().min(1).optional(),

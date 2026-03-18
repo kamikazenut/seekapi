@@ -106,6 +106,8 @@ Jackett:
 - `JACKETT_BASE_URL`
 - `JACKETT_API_KEY`
 - `JACKETT_INDEXER`
+- `JACKETT_MIN_SEEDERS`
+- `JACKETT_MIN_PEERS`
 
 qBittorrent automation:
 

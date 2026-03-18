@@ -64,6 +64,22 @@ function unique(values: Array<string | null | undefined>): string[] {
   return [...new Set(values.map((value) => (typeof value === "string" ? value.trim() : "")).filter(Boolean))];
 }
 
+function tokenizeTitle(input: string): string[] {
+  return normalizeTitle(input).split(" ").filter(Boolean);
+}
+
+function containsNormalizedPhrase(haystack: string, needle: string): boolean {
+  const normalizedHaystack = normalizeTitle(haystack);
+  const normalizedNeedle = normalizeTitle(needle);
+  if (!normalizedHaystack || !normalizedNeedle) {
+    return false;
+  }
+
+  const escaped = normalizedNeedle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`(?:^| )${escaped}(?:$| )`, "i");
+  return pattern.test(normalizedHaystack);
+}
+
 function overlapScore(left: string, right: string): number {
   const leftTokens = new Set(normalizeTitle(left).split(" ").filter(Boolean));
   const rightTokens = new Set(normalizeTitle(right).split(" ").filter(Boolean));
@@ -140,6 +156,92 @@ function isSeasonPack(title: string, seasonNumber: number): boolean {
   const seasonPattern = new RegExp(`\\bS0?${seasonNumber}\\b`, "i");
   const wordPattern = new RegExp(`\\bSeason[ ._-]*0?${seasonNumber}\\b`, "i");
   return seasonPattern.test(title) || wordPattern.test(title);
+}
+
+function extractYearFromTitle(input: string): number | null {
+  const match = input.match(/\b(19|20)\d{2}\b/);
+  return match ? Number(match[0]) : null;
+}
+
+function bestTitleSimilarity(title: CachedTitleRow, resultTitle: string): number {
+  return Math.max(...unique([title.title, title.original_title]).map((value) => overlapScore(value, resultTitle)), 0);
+}
+
+function passesAvailabilityGate(result: JackettSearchResult): boolean {
+  const seedersOk = result.seeders !== null ? result.seeders > env.JACKETT_MIN_SEEDERS : false;
+  const peersOk = result.peers !== null ? result.peers > env.JACKETT_MIN_PEERS : false;
+
+  if (result.seeders === null && result.peers === null) {
+    return false;
+  }
+
+  return seedersOk || peersOk;
+}
+
+function passesTitleGate(
+  target: AutomationTarget,
+  title: CachedTitleRow,
+  resultTitle: string,
+  episode: CachedEpisodeRow | null
+): boolean {
+  const titleVariants = unique([title.title, title.original_title]);
+  const tokenCounts = titleVariants.map((value) => tokenizeTitle(value).length).filter((value) => value > 0);
+  const shortestTokenCount = tokenCounts.length > 0 ? Math.min(...tokenCounts) : 0;
+  const minSimilarity = shortestTokenCount <= 2 ? 0.95 : shortestTokenCount === 3 ? 0.82 : 0.68;
+  const similarity = bestTitleSimilarity(title, resultTitle);
+  const phraseMatched = titleVariants.some((value) => containsNormalizedPhrase(resultTitle, value));
+  const startsWithTitle = titleVariants.some((value) => normalizeTitle(resultTitle).startsWith(normalizeTitle(value)));
+
+  if (!(startsWithTitle || phraseMatched || similarity >= minSimilarity)) {
+    return false;
+  }
+
+  const guessed = extractMediaGuess(resultTitle, resultTitle);
+
+  if (target.mediaType === "movie") {
+    if (guessed.type === "tv") {
+      return false;
+    }
+
+    const releaseYear = title.release_date ? Number(title.release_date.slice(0, 4)) : null;
+    const resultYear = extractYearFromTitle(resultTitle);
+    if (releaseYear && resultYear && Math.abs(releaseYear - resultYear) > 1) {
+      return false;
+    }
+
+    return true;
+  }
+
+  if (target.seasonNumber === undefined) {
+    return false;
+  }
+
+  const seasonPack = isSeasonPack(resultTitle, target.seasonNumber);
+  if (target.episodeNumber === undefined) {
+    if (guessed.type === "tv" && guessed.seasonNumber !== undefined && guessed.seasonNumber !== target.seasonNumber) {
+      return false;
+    }
+
+    return seasonPack || (guessed.type === "tv" && guessed.seasonNumber === target.seasonNumber);
+  }
+
+  if (guessed.type === "tv" && guessed.seasonNumber !== undefined && guessed.seasonNumber !== target.seasonNumber) {
+    return false;
+  }
+
+  if (guessed.type === "tv" && guessed.episodeNumber !== undefined) {
+    return guessed.episodeNumber === target.episodeNumber;
+  }
+
+  if (seasonPack) {
+    return true;
+  }
+
+  if (episode?.name && containsNormalizedPhrase(resultTitle, episode.name)) {
+    return true;
+  }
+
+  return false;
 }
 
 function scoreResult(
@@ -383,7 +485,9 @@ export async function searchJackett(
   return items
     .map((item) => mapResult(item, target, title, episode))
     .filter((item) => item.downloadUrl)
+    .filter((item) => passesAvailabilityGate(item))
     .filter((item) => !isAdultCategory(item.categories))
     .filter((item) => !containsAdultTerms(item.title))
+    .filter((item) => passesTitleGate(target, title, item.title, episode))
     .sort((left, right) => right.score - left.score);
 }
