@@ -67,6 +67,10 @@ function readJobTorrentHash(metadata: Record<string, unknown> | null): string | 
   return null;
 }
 
+function buildAutomationJobSelectQuery() {
+  return "id, media_type, tmdb_id, season_number, episode_number, status, trigger_source, attempt_count, release_title, release_guid, release_link, seek_task_id, seek_video_ids, last_error, next_attempt_at, metadata, created_at, updated_at";
+}
+
 export async function upsertTitle(title: TmdbTitleRecord): Promise<void> {
   const { error } = await supabase.from("media_titles").upsert(
     {
@@ -261,18 +265,22 @@ export function pickBestSource(sources: VideoSourceRow[]): VideoSourceRow | null
 export async function getActiveAutomationJob(target: AutomationTarget): Promise<AutomationJobRow | null> {
   const baseQuery = supabase
     .from("automation_jobs")
-    .select(
-      "id, media_type, tmdb_id, season_number, episode_number, status, trigger_source, attempt_count, release_title, release_guid, release_link, seek_task_id, seek_video_ids, last_error, next_attempt_at, metadata, created_at, updated_at"
-    )
+    .select(buildAutomationJobSelectQuery())
     .in("status", ACTIVE_AUTOMATION_STATUSES)
     .eq("media_type", target.mediaType)
     .eq("tmdb_id", target.tmdbId)
     .order("created_at", { ascending: false });
 
-  const query =
-    target.mediaType === "tv"
-      ? baseQuery.eq("season_number", target.seasonNumber ?? null).eq("episode_number", target.episodeNumber ?? null)
-      : baseQuery.is("season_number", null).is("episode_number", null);
+  let query;
+  if (target.mediaType === "tv") {
+    query = baseQuery.eq("season_number", target.seasonNumber ?? null);
+    query =
+      target.episodeNumber === undefined
+        ? query.is("episode_number", null)
+        : query.eq("episode_number", target.episodeNumber);
+  } else {
+    query = baseQuery.is("season_number", null).is("episode_number", null);
+  }
 
   const { data, error } = await query.maybeSingle<AutomationJobRow>();
 
@@ -294,9 +302,7 @@ export async function createAutomationJob(target: AutomationTarget, triggerSourc
   const { data, error } = await supabase
     .from("automation_jobs")
     .insert(payload)
-    .select(
-      "id, media_type, tmdb_id, season_number, episode_number, status, trigger_source, attempt_count, release_title, release_guid, release_link, seek_task_id, seek_video_ids, last_error, next_attempt_at, metadata, created_at, updated_at"
-    )
+    .select(buildAutomationJobSelectQuery())
     .single<AutomationJobRow>();
 
   if (error) {
@@ -318,9 +324,7 @@ export async function createAutomationJob(target: AutomationTarget, triggerSourc
 export async function getAutomationJob(jobId: string): Promise<AutomationJobRow | null> {
   const { data, error } = await supabase
     .from("automation_jobs")
-    .select(
-      "id, media_type, tmdb_id, season_number, episode_number, status, trigger_source, attempt_count, release_title, release_guid, release_link, seek_task_id, seek_video_ids, last_error, next_attempt_at, metadata, created_at, updated_at"
-    )
+    .select(buildAutomationJobSelectQuery())
     .eq("id", jobId)
     .maybeSingle<AutomationJobRow>();
 
@@ -331,9 +335,7 @@ export async function getAutomationJob(jobId: string): Promise<AutomationJobRow 
 export async function getDueAutomationJobs(limit = 3): Promise<AutomationJobRow[]> {
   const { data, error } = await supabase
     .from("automation_jobs")
-    .select(
-      "id, media_type, tmdb_id, season_number, episode_number, status, trigger_source, attempt_count, release_title, release_guid, release_link, seek_task_id, seek_video_ids, last_error, next_attempt_at, metadata, created_at, updated_at"
-    )
+    .select(buildAutomationJobSelectQuery())
     .in("status", DUE_AUTOMATION_STATUSES)
     .lte("next_attempt_at", new Date().toISOString())
     .order("next_attempt_at", { ascending: true })
@@ -368,9 +370,7 @@ export async function updateAutomationJob(
       metadata: patch.metadata
     })
     .eq("id", jobId)
-    .select(
-      "id, media_type, tmdb_id, season_number, episode_number, status, trigger_source, attempt_count, release_title, release_guid, release_link, seek_task_id, seek_video_ids, last_error, next_attempt_at, metadata, created_at, updated_at"
-    )
+    .select(buildAutomationJobSelectQuery())
     .single<AutomationJobRow>();
 
   throwIfError(error);
@@ -388,10 +388,7 @@ export async function findRecentAutomationJobByTorrentHash(torrentHash: string):
 
   const { data, error } = await supabase
     .from("automation_jobs")
-    .select(
-      "id, media_type, tmdb_id, season_number, episode_number, status, trigger_source, attempt_count, release_title, release_guid, release_link, seek_task_id, seek_video_ids, last_error, next_attempt_at, metadata, created_at, updated_at"
-    )
-    .in("status", ACTIVE_AUTOMATION_STATUSES)
+    .select(buildAutomationJobSelectQuery())
     .order("created_at", { ascending: false })
     .limit(100)
     .returns<AutomationJobRow[]>();
@@ -443,9 +440,7 @@ export async function completeActiveAutomationJob(
 export async function listRecentAutomationJobs(limit = 20): Promise<AutomationJobRow[]> {
   const { data, error } = await supabase
     .from("automation_jobs")
-    .select(
-      "id, media_type, tmdb_id, season_number, episode_number, status, trigger_source, attempt_count, release_title, release_guid, release_link, seek_task_id, seek_video_ids, last_error, next_attempt_at, metadata, created_at, updated_at"
-    )
+    .select(buildAutomationJobSelectQuery())
     .order("updated_at", { ascending: false })
     .limit(limit)
     .returns<AutomationJobRow[]>();

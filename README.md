@@ -28,9 +28,11 @@ The default automation pipeline is:
 - `GET /`
 - `GET /dashboard`
 - `POST /dashboard/actions/automation/movie`
+- `POST /dashboard/actions/automation/season`
 - `POST /dashboard/actions/automation/tv`
 - `GET /healthz`
 - `POST /v1/automation/movie/:tmdbId`
+- `POST /v1/automation/tv/:tmdbId/:season`
 - `POST /v1/automation/tv/:tmdbId/:season/:episode`
 - `GET /v1/automation/jobs/:jobId`
 - `POST /v1/callbacks/seekstream`
@@ -41,6 +43,7 @@ The default automation pipeline is:
 ## What Changed
 
 - Jackett TV lookups no longer fail just because an indexer rejects `tmdbid`. The app now falls back to title-based TV queries automatically.
+- Season-pack jobs are now supported in the dashboard and API, and callback matching can map each file from a season pack back to the correct episode.
 - Automation can hand releases to qBittorrent instead of pushing them straight into Seek.
 - Callback matching now links back to queued jobs by torrent hash when available, which is much more reliable for TV episodes.
 - Adult filtering is stricter for obvious porn/XXX releases and still blocks TMDB titles marked as adult.

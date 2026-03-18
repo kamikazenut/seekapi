@@ -304,3 +304,31 @@ export async function fetchEpisodeByTmdbId(
     return null;
   }
 }
+
+export async function fetchSeasonEpisodesByTmdbId(showTmdbId: number, seasonNumber: number): Promise<TmdbEpisodeRecord[]> {
+  if (!tmdbConfigured) {
+    return [];
+  }
+
+  try {
+    const details = await tmdbRequest<Record<string, unknown>>(`/tv/${showTmdbId}/season/${seasonNumber}`);
+    const episodes = Array.isArray(details.episodes) ? details.episodes : [];
+
+    return episodes
+      .map((episode) => {
+        if (!episode || typeof episode !== "object") {
+          return null;
+        }
+
+        const episodeNumber = typeof episode.episode_number === "number" ? episode.episode_number : null;
+        if (!episodeNumber || episodeNumber <= 0) {
+          return null;
+        }
+
+        return mapEpisode(showTmdbId, seasonNumber, episodeNumber, episode as Record<string, unknown>);
+      })
+      .filter((episode): episode is TmdbEpisodeRecord => Boolean(episode));
+  } catch {
+    return [];
+  }
+}

@@ -23,7 +23,7 @@ import {
   upsertTitle,
   upsertVideoSource
 } from "./lib/repository";
-import { fetchEpisodeByTmdbId, fetchTitleByTmdbId, resolveMediaMatch } from "./lib/tmdb";
+import { fetchEpisodeByTmdbId, fetchSeasonEpisodesByTmdbId, fetchTitleByTmdbId, resolveMediaMatch } from "./lib/tmdb";
 import type {
   AutomationJobRow,
   CachedEpisodeRow,
@@ -103,6 +103,10 @@ function formatEpisodeSubtitle(
   return `${baseTitle}S${String(season).padStart(2, "0")}E${String(episodeNumber).padStart(2, "0")}${episodeName} | TMDB ${tmdbId}`;
 }
 
+function formatSeasonTarget(tmdbId: number, seasonNumber: number): string {
+  return `TMDB ${tmdbId} S${String(seasonNumber).padStart(2, "0")}`;
+}
+
 function automationConfigMessage(): string {
   return env.AUTOMATION_DELIVERY_MODE === "seek"
     ? "Automation is not configured. Set Jackett and Seek credentials first."
@@ -169,7 +173,40 @@ async function hydrateEpisode(showTmdbId: number, seasonNumber: number, episodeN
   return getCachedEpisode(showTmdbId, seasonNumber, episodeNumber);
 }
 
-async function resolveMatchFromAutomationJob(job: AutomationJobRow): Promise<ResolvedMediaMatch | null> {
+async function queueSeasonAutomation(showTmdbId: number, seasonNumber: number, triggerSource: string): Promise<AutomationJobRow | null> {
+  const title = await hydrateTitle("tv", showTmdbId);
+  if (!title) {
+    const error = new Error(`TMDB season ${formatSeasonTarget(showTmdbId, seasonNumber)} could not be loaded.`);
+    (error as Error & { status?: number }).status = 404;
+    throw error;
+  }
+
+  if (isAdultTmdbMetadata(title.metadata) || containsAdultTerms(title.title, title.original_title)) {
+    const error = new Error("Adult content is blocked by the filter.");
+    (error as Error & { status?: number }).status = 422;
+    throw error;
+  }
+
+  const episodes = await fetchSeasonEpisodesByTmdbId(showTmdbId, seasonNumber);
+  if (episodes.length === 0) {
+    const error = new Error(`No TMDB episodes were found for ${formatSeasonTarget(showTmdbId, seasonNumber)}.`);
+    (error as Error & { status?: number }).status = 404;
+    throw error;
+  }
+
+  await Promise.all(episodes.map(async (episode) => upsertEpisode(episode)));
+
+  return queueAutomationTarget(
+    {
+      mediaType: "tv",
+      tmdbId: showTmdbId,
+      seasonNumber
+    },
+    triggerSource
+  );
+}
+
+async function resolveMatchFromAutomationJob(job: AutomationJobRow, guess: ReturnType<typeof extractMediaGuess>): Promise<ResolvedMediaMatch | null> {
   const title = await hydrateTitle(job.media_type, job.tmdb_id);
   if (!title) {
     return null;
@@ -183,10 +220,34 @@ async function resolveMatchFromAutomationJob(job: AutomationJobRow): Promise<Res
   }
 
   if (job.season_number === null || job.episode_number === null) {
-    return null;
+    if (guess.type !== "tv" || guess.seasonNumber !== job.season_number || guess.episodeNumber === undefined) {
+      return null;
+    }
+
+    const episode = await hydrateEpisode(job.tmdb_id, job.season_number, guess.episodeNumber);
+    return {
+      title: cachedTitleToRecord(title),
+      episode:
+        episode
+          ? cachedEpisodeToRecord(episode)
+          : {
+              showTmdbId: job.tmdb_id,
+              seasonNumber: job.season_number,
+              episodeNumber: guess.episodeNumber,
+              name: null,
+              airDate: null,
+              metadata: {}
+            },
+      score: 1
+    };
   }
 
-  const episode = await hydrateEpisode(job.tmdb_id, job.season_number, job.episode_number);
+  const resolvedEpisodeNumber =
+    guess.type === "tv" && guess.seasonNumber === job.season_number && guess.episodeNumber !== undefined
+      ? guess.episodeNumber
+      : job.episode_number;
+
+  const episode = await hydrateEpisode(job.tmdb_id, job.season_number, resolvedEpisodeNumber);
   return {
     title: cachedTitleToRecord(title),
     episode:
@@ -196,7 +257,7 @@ async function resolveMatchFromAutomationJob(job: AutomationJobRow): Promise<Res
       {
         showTmdbId: job.tmdb_id,
         seasonNumber: job.season_number,
-        episodeNumber: job.episode_number,
+        episodeNumber: resolvedEpisodeNumber,
         name: null,
         airDate: null,
         metadata: {}
@@ -286,6 +347,29 @@ app.post(
 );
 
 app.post(
+  "/dashboard/actions/automation/season",
+  asyncRoute(async (request, response) => {
+    if (!automationConfigured) {
+      dashboardRedirect(response, { error: "Automation is not configured yet." });
+      return;
+    }
+
+    const tmdbId = parsePositiveInt(getSingleBodyValue(request.body.tmdbId, "tmdbId"), "tmdbId");
+    const seasonNumber = parsePositiveInt(getSingleBodyValue(request.body.season, "season"), "season");
+    const job = await queueSeasonAutomation(tmdbId, seasonNumber, "manual-dashboard-season");
+
+    if (!job) {
+      dashboardRedirect(response, { error: "Automation job could not be created." });
+      return;
+    }
+
+    dashboardRedirect(response, {
+      notice: `Queued season job ${job.id} for ${formatSeasonTarget(tmdbId, seasonNumber)}.`
+    });
+  })
+);
+
+app.post(
   "/dashboard/actions/automation/tv",
   asyncRoute(async (request, response) => {
     if (!automationConfigured) {
@@ -335,6 +419,24 @@ app.post(
       },
       "manual"
     );
+
+    if (!job) {
+      response.status(503).json({
+        message: automationConfigMessage()
+      });
+      return;
+    }
+
+    response.status(202).json({ ok: true, job });
+  })
+);
+
+app.post(
+  "/v1/automation/tv/:tmdbId/:season",
+  asyncRoute(async (request, response) => {
+    const tmdbId = parsePositiveInt(getSingleParam(request.params.tmdbId, "tmdbId"), "tmdbId");
+    const seasonNumber = parsePositiveInt(getSingleParam(request.params.season, "season"), "season");
+    const job = await queueSeasonAutomation(tmdbId, seasonNumber, "manual-season");
 
     if (!job) {
       response.status(503).json({
@@ -403,7 +505,7 @@ app.post(
 
     const guess = extractMediaGuess(payload.torrentName, payload.contentPath);
     const linkedJob = payload.torrentHash ? await findRecentAutomationJobByTorrentHash(payload.torrentHash) : null;
-    const match = (linkedJob ? await resolveMatchFromAutomationJob(linkedJob) : null) ?? (await resolveMediaMatch(guess));
+    const match = (linkedJob ? await resolveMatchFromAutomationJob(linkedJob, guess) : null) ?? (await resolveMediaMatch(guess));
 
     if (match && isAdultTmdbMetadata(match.title.metadata)) {
       response.status(422).json({ message: "Adult content is blocked by the filter." });

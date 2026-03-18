@@ -50,6 +50,10 @@ function renderJobTarget(job: AutomationJobRow): string {
     return `movie:${job.tmdb_id}`;
   }
 
+  if (job.episode_number === null) {
+    return `tv:${job.tmdb_id} S${String(job.season_number ?? 0).padStart(2, "0")}`;
+  }
+
   return `tv:${job.tmdb_id} S${String(job.season_number ?? 0).padStart(2, "0")}E${String(job.episode_number ?? 0).padStart(2, "0")}`;
 }
 
@@ -94,10 +98,12 @@ function renderJobRows(jobs: AutomationJobRow[]): string {
       const embedHref =
         job.media_type === "movie"
           ? `/embed/movie/${job.tmdb_id}`
-          : `/embed/tv/${job.tmdb_id}/${job.season_number}/${job.episode_number}`;
+          : job.episode_number === null
+            ? null
+            : `/embed/tv/${job.tmdb_id}/${job.season_number}/${job.episode_number}`;
 
       return `<tr>
-        <td><a href="${embedHref}" target="_blank" rel="noreferrer">${escapeHtml(renderJobTarget(job))}</a></td>
+        <td>${embedHref ? `<a href="${embedHref}" target="_blank" rel="noreferrer">${escapeHtml(renderJobTarget(job))}</a>` : escapeHtml(renderJobTarget(job))}</td>
         <td>${renderStatusBadge(job.status)}</td>
         <td>${escapeHtml(job.trigger_source)}</td>
         <td>${job.attempt_count}</td>
@@ -496,6 +502,24 @@ export function renderDashboardPage(params: DashboardPageParams): string {
                 <input type="number" min="1" name="tmdbId" placeholder="603" required />
               </label>
               <button type="submit">Queue Movie Automation</button>
+            </form>
+          </article>
+
+          <article class="card section">
+            <h2>Manual Season Trigger</h2>
+            <p>Queue a season-pack job by TMDB show id and season. This is the fastest way to pull a whole season through qBittorrent and let callbacks map each episode automatically.</p>
+            <form class="form-grid" action="/dashboard/actions/automation/season" method="post">
+              <div class="inline-grid">
+                <label>
+                  TMDB Show Id
+                  <input type="number" min="1" name="tmdbId" placeholder="1399" required />
+                </label>
+                <label>
+                  Season
+                  <input type="number" min="1" name="season" placeholder="1" required />
+                </label>
+              </div>
+              <button type="submit">Queue Season Automation</button>
             </form>
           </article>
 

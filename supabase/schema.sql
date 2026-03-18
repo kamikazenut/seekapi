@@ -103,6 +103,11 @@ create table if not exists public.automation_jobs (
     or (
       media_type = 'tv'
       and season_number is not null
+      and episode_number is null
+    )
+    or (
+      media_type = 'tv'
+      and season_number is not null
       and episode_number is not null
     )
   )
@@ -135,6 +140,29 @@ alter table public.automation_jobs
 alter table public.automation_jobs
   add constraint automation_jobs_status_check
   check (status in ('queued', 'searching', 'submitting', 'polling', 'downloading', 'completed', 'failed'));
+
+alter table public.automation_jobs
+  drop constraint if exists automation_jobs_scope_check;
+
+alter table public.automation_jobs
+  add constraint automation_jobs_scope_check
+  check (
+    (
+      media_type = 'movie'
+      and season_number is null
+      and episode_number is null
+    )
+    or (
+      media_type = 'tv'
+      and season_number is not null
+      and episode_number is null
+    )
+    or (
+      media_type = 'tv'
+      and season_number is not null
+      and episode_number is not null
+    )
+  );
 
 create index if not exists media_titles_lookup_idx
   on public.media_titles (media_type, tmdb_id);

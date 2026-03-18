@@ -168,12 +168,24 @@ function scoreResult(
 
   const guess = extractMediaGuess(resultTitle, resultTitle);
 
-  if (guess.type === "tv" && guess.seasonNumber === target.seasonNumber && guess.episodeNumber === target.episodeNumber) {
-    score += 8;
-  } else if (target.seasonNumber !== undefined && isSeasonPack(resultTitle, target.seasonNumber)) {
-    score += 4;
+  if (target.episodeNumber !== undefined) {
+    if (guess.type === "tv" && guess.seasonNumber === target.seasonNumber && guess.episodeNumber === target.episodeNumber) {
+      score += 8;
+    } else if (target.seasonNumber !== undefined && isSeasonPack(resultTitle, target.seasonNumber)) {
+      score += 4;
+    } else {
+      score -= 6;
+    }
   } else {
-    score -= 6;
+    if (target.seasonNumber !== undefined && isSeasonPack(resultTitle, target.seasonNumber)) {
+      score += 10;
+    }
+
+    if (guess.type === "tv" && guess.seasonNumber === target.seasonNumber && guess.episodeNumber !== undefined) {
+      score += 4;
+    } else if (guess.type === "tv" && guess.seasonNumber !== undefined && guess.seasonNumber !== target.seasonNumber) {
+      score -= 6;
+    }
   }
 
   if (episode?.name) {
@@ -230,8 +242,12 @@ function buildBaseParams(target: AutomationTarget, title: CachedTitleRow): URLSe
       params.set("year", year);
     }
   } else {
-    params.set("season", String(target.seasonNumber));
-    params.set("ep", String(target.episodeNumber));
+    if (target.seasonNumber !== undefined) {
+      params.set("season", String(target.seasonNumber));
+    }
+    if (target.episodeNumber !== undefined) {
+      params.set("ep", String(target.episodeNumber));
+    }
   }
 
   return params;
@@ -271,15 +287,19 @@ function buildSearchAttempts(
       addAttempt(`movie text ${titleVariant}`, `${titleVariant} ${title.release_date?.slice(0, 4) ?? ""}`.trim(), "search");
     }
   } else {
-    const episodeCode = `S${String(target.seasonNumber ?? 0).padStart(2, "0")}E${String(target.episodeNumber ?? 0).padStart(2, "0")}`;
+    const seasonCode = `S${String(target.seasonNumber ?? 0).padStart(2, "0")}`;
+    const episodeCode = `${seasonCode}E${String(target.episodeNumber ?? 0).padStart(2, "0")}`;
     const seasonLabel = `Season ${target.seasonNumber ?? 0}`;
 
     for (const titleVariant of titleVariants) {
       addAttempt(`tv tmdb ${titleVariant}`, titleVariant, "tvsearch", { tmdbid: target.tmdbId });
       addAttempt(`tv title ${titleVariant}`, titleVariant, "tvsearch");
-      addAttempt(`tv text ${titleVariant} ${episodeCode}`, `${titleVariant} ${episodeCode}`, "search");
       addAttempt(`tv text ${titleVariant} ${seasonLabel}`, `${titleVariant} ${seasonLabel}`, "search");
-      if (episode?.name) {
+      addAttempt(`tv text ${titleVariant} ${seasonCode}`, `${titleVariant} ${seasonCode}`, "search");
+      if (target.episodeNumber !== undefined) {
+        addAttempt(`tv text ${titleVariant} ${episodeCode}`, `${titleVariant} ${episodeCode}`, "search");
+      }
+      if (episode?.name && target.episodeNumber !== undefined) {
         addAttempt(`tv text ${titleVariant} ${episode.name}`, `${titleVariant} ${episode.name}`, "search");
       }
     }
