@@ -42,6 +42,8 @@ const parser = new XMLParser({
   trimValues: true
 });
 
+const BYTES_PER_GIB = 1024 ** 3;
+
 function ensureJackettConfigured(): void {
   if (!env.JACKETT_BASE_URL || !env.JACKETT_API_KEY) {
     throw new Error("Jackett is not configured.");
@@ -176,6 +178,14 @@ function passesAvailabilityGate(result: JackettSearchResult): boolean {
   }
 
   return seedersOk || peersOk;
+}
+
+function passesSizeGate(result: JackettSearchResult): boolean {
+  if (result.size === null) {
+    return false;
+  }
+
+  return result.size <= env.JACKETT_MAX_SIZE_GB * BYTES_PER_GIB;
 }
 
 function passesTitleGate(
@@ -485,6 +495,7 @@ export async function searchJackett(
   return items
     .map((item) => mapResult(item, target, title, episode))
     .filter((item) => item.downloadUrl)
+    .filter((item) => passesSizeGate(item))
     .filter((item) => passesAvailabilityGate(item))
     .filter((item) => !isAdultCategory(item.categories))
     .filter((item) => !containsAdultTerms(item.title))

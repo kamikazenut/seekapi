@@ -108,6 +108,7 @@ Jackett:
 - `JACKETT_INDEXER`
 - `JACKETT_MIN_SEEDERS`
 - `JACKETT_MIN_PEERS`
+- `JACKETT_MAX_SIZE_GB`
 
 qBittorrent automation:
 
