@@ -334,14 +334,23 @@ app.post(
     }
 
     if (enabled) {
-      triggerAutoGrabberCycle();
+      const status = await triggerAutoGrabberCycle();
+      if (status.lastError) {
+        dashboardRedirect(response, { error: `Auto-grabber failed: ${status.lastError}` });
+        return;
+      }
+
+      dashboardRedirect(response, {
+        notice:
+          mode === "movies"
+            ? `Movie auto-grabber enabled. Immediate scan finished with ${status.lastQueuedMovies} movies queued.`
+            : `Season-pack auto-grabber enabled. Immediate scan finished with ${status.lastQueuedSeasonPacks} seasons queued.`
+      });
+      return;
     }
 
     dashboardRedirect(response, {
-      notice:
-        mode === "movies"
-          ? `Movie auto-grabber ${enabled ? "enabled" : "disabled"}${enabled ? ". Immediate scan started." : "."}`
-          : `Season-pack auto-grabber ${enabled ? "enabled" : "disabled"}${enabled ? ". Immediate scan started." : "."}`
+      notice: mode === "movies" ? "Movie auto-grabber disabled." : "Season-pack auto-grabber disabled."
     });
   })
 );
@@ -354,8 +363,15 @@ app.post(
       return;
     }
 
-    triggerAutoGrabberCycle();
-    dashboardRedirect(response, { notice: "Auto-grabber scan started." });
+    const status = await triggerAutoGrabberCycle();
+    if (status.lastError) {
+      dashboardRedirect(response, { error: `Auto-grabber failed: ${status.lastError}` });
+      return;
+    }
+
+    dashboardRedirect(response, {
+      notice: `Auto-grabber finished. Queued ${status.lastQueuedMovies} movies and ${status.lastQueuedSeasonPacks} seasons.`
+    });
   })
 );
 

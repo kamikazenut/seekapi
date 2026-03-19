@@ -17,6 +17,7 @@ let lastFinishedAt: string | null = null;
 let lastQueuedMovies = 0;
 let lastQueuedSeasonPacks = 0;
 let lastError: string | null = null;
+let inflightCycle: Promise<AutoGrabberStatus> | null = null;
 
 function hasReleased(releaseDate: string | null | undefined): boolean {
   if (!releaseDate) {
@@ -158,39 +159,6 @@ async function runSeasonPackAutoGrabber(): Promise<number> {
   return queued;
 }
 
-async function processAutoGrabberCycle(): Promise<void> {
-  if (!automationConfigured || !tmdbConfigured || running) {
-    return;
-  }
-
-  running = true;
-  lastStartedAt = new Date().toISOString();
-  lastError = null;
-
-  try {
-    const modes = await getAutomationModeSettings();
-    let queuedMovies = 0;
-    let queuedSeasonPacks = 0;
-
-    if (modes.moviesEnabled) {
-      queuedMovies = await runMovieAutoGrabber();
-    }
-
-    if (modes.seasonPacksEnabled) {
-      queuedSeasonPacks = await runSeasonPackAutoGrabber();
-    }
-
-    lastQueuedMovies = queuedMovies;
-    lastQueuedSeasonPacks = queuedSeasonPacks;
-    lastFinishedAt = new Date().toISOString();
-  } catch (error) {
-    lastError = error instanceof Error ? error.message : String(error);
-    console.error("Auto-grabber cycle failed:", lastError);
-  } finally {
-    running = false;
-  }
-}
-
 export function getAutoGrabberStatus(): AutoGrabberStatus {
   return {
     running,
@@ -203,8 +171,52 @@ export function getAutoGrabberStatus(): AutoGrabberStatus {
   };
 }
 
-export function triggerAutoGrabberCycle(): void {
-  void processAutoGrabberCycle();
+export function triggerAutoGrabberCycle(): Promise<AutoGrabberStatus> {
+  if (!automationConfigured || !tmdbConfigured) {
+    return Promise.resolve(getAutoGrabberStatus());
+  }
+
+  if (inflightCycle) {
+    return inflightCycle;
+  }
+
+  inflightCycle = (async () => {
+    if (running) {
+      return getAutoGrabberStatus();
+    }
+
+    running = true;
+    lastStartedAt = new Date().toISOString();
+    lastError = null;
+
+    try {
+      const modes = await getAutomationModeSettings();
+      let queuedMovies = 0;
+      let queuedSeasonPacks = 0;
+
+      if (modes.moviesEnabled) {
+        queuedMovies = await runMovieAutoGrabber();
+      }
+
+      if (modes.seasonPacksEnabled) {
+        queuedSeasonPacks = await runSeasonPackAutoGrabber();
+      }
+
+      lastQueuedMovies = queuedMovies;
+      lastQueuedSeasonPacks = queuedSeasonPacks;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      console.error("Auto-grabber cycle failed:", lastError);
+    } finally {
+      lastFinishedAt = new Date().toISOString();
+      running = false;
+      inflightCycle = null;
+    }
+
+    return getAutoGrabberStatus();
+  })();
+
+  return inflightCycle;
 }
 
 export function startAutoGrabberWorker(): void {

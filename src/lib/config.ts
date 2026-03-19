@@ -63,8 +63,8 @@ const envSchema = z.object({
     .optional()
     .transform((value) => value === "true"),
   AUTO_GRAB_INTERVAL_MS: z.coerce.number().int().positive().default(3600000),
-  AUTO_GRAB_MOVIE_PAGES: z.coerce.number().int().positive().default(1),
-  AUTO_GRAB_TV_PAGES: z.coerce.number().int().positive().default(1),
+  AUTO_GRAB_MOVIE_PAGES: z.coerce.number().int().positive().default(3),
+  AUTO_GRAB_TV_PAGES: z.coerce.number().int().positive().default(3),
   AUTO_GRAB_REQUEUE_HOURS: z.coerce.number().int().positive().default(24),
   AUTOMATION_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(15000),
   AUTOMATION_RETRY_MINUTES: z.coerce.number().int().positive().default(30),
