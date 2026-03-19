@@ -8,10 +8,10 @@ const TV_PATTERNS = [
 ];
 
 const STOP_TOKENS =
-  /\b(2160p|1080p|720p|480p|bluray|bdrip|brrip|web(?:[-.\s]?dl|rip)?|hdrip|hdtv|dvdrip|remux|proper|repack|x264|x265|h\.?264|h\.?265|hevc|aac(?:2\.0)?|ddp?(?:5\.1|7\.1)?|atmos|10bit|dv|hdr|amzn|nf|dsnp|hmax|rarbg|yts|torrentgalaxy|etrg)\b/i;
+  /\b(4320p|2160p|1440p|1080p|720p|480p|8k|4k|uhd|bluray|bdrip|brrip|web(?:[-.\s]?dl|rip)?|hdrip|hdtv|dvdrip|remux|proper|repack|x264|x265|h\.?264|h\.?265|hevc|aac(?:2\.0)?|ddp?(?:5\.1|7\.1)?|atmos|10bit|dv|hdr|amzn|nf|dsnp|hmax|rarbg|yts|torrentgalaxy|etrg)\b/i;
 
 const YEAR_PATTERN = /\b(19|20)\d{2}\b/;
-const RESOLUTION_PATTERN = /\b(2160p|1080p|720p|480p)\b/i;
+const RESOLUTION_PATTERN = /\b(4320p|2160p|1440p|1080p|720p|480p|8k|4k|uhd)\b/i;
 
 function stripExtension(input: string): string {
   return input.replace(/\.[a-z0-9]{2,4}$/i, "");
@@ -51,11 +51,24 @@ function unique(values: Array<string | undefined>): string[] {
   return [...new Set(values.filter((value): value is string => Boolean(value && value.trim())).map((value) => value.trim()))];
 }
 
+function normalizeResolution(value: string): string {
+  const normalized = value.toLowerCase();
+  if (normalized === "4k" || normalized === "uhd") {
+    return "2160p";
+  }
+
+  if (normalized === "8k") {
+    return "4320p";
+  }
+
+  return normalized;
+}
+
 function extractResolution(...inputs: string[]): string | undefined {
   for (const input of inputs) {
     const match = input.match(RESOLUTION_PATTERN);
     if (match) {
-      return match[1].toLowerCase();
+      return normalizeResolution(match[1]);
     }
   }
 

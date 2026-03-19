@@ -135,7 +135,15 @@ function readCategories(item: Record<string, unknown>): number[] {
 
 function resolutionRank(value: string | null): number {
   const normalized = value?.toLowerCase();
+  if (normalized === "4320p") {
+    return 6;
+  }
+
   if (normalized === "2160p") {
+    return 5;
+  }
+
+  if (normalized === "1440p") {
     return 4;
   }
 
@@ -186,6 +194,14 @@ function passesSizeGate(result: JackettSearchResult): boolean {
   }
 
   return result.size <= env.JACKETT_MAX_SIZE_GB * BYTES_PER_GIB;
+}
+
+function passesResolutionGate(result: JackettSearchResult): boolean {
+  if (!result.resolution) {
+    return false;
+  }
+
+  return resolutionRank(result.resolution) <= resolutionRank(env.JACKETT_MAX_RESOLUTION);
 }
 
 function passesTitleGate(
@@ -496,6 +512,7 @@ export async function searchJackett(
     .map((item) => mapResult(item, target, title, episode))
     .filter((item) => item.downloadUrl)
     .filter((item) => passesSizeGate(item))
+    .filter((item) => passesResolutionGate(item))
     .filter((item) => passesAvailabilityGate(item))
     .filter((item) => !isAdultCategory(item.categories))
     .filter((item) => !containsAdultTerms(item.title))

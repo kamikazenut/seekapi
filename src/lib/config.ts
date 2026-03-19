@@ -18,6 +18,7 @@ const envSchema = z.object({
   JACKETT_MIN_SEEDERS: z.coerce.number().int().nonnegative().default(8),
   JACKETT_MIN_PEERS: z.coerce.number().int().nonnegative().default(8),
   JACKETT_MAX_SIZE_GB: z.coerce.number().positive().default(15),
+  JACKETT_MAX_RESOLUTION: z.enum(["480p", "720p", "1080p", "1440p", "2160p", "4320p"]).default("1080p"),
   QBITTORRENT_BASE_URL: z.url().optional(),
   QBITTORRENT_USERNAME: z.string().min(1).optional(),
   QBITTORRENT_PASSWORD: z.string().min(1).optional(),
