@@ -34,9 +34,9 @@ function formatDate(input: string): string {
 
 function renderStatusBadge(status: string): string {
   const color =
-    status === "completed"
+    status === "completed" || status === "enabled"
       ? "good"
-      : status === "failed"
+      : status === "failed" || status === "disabled"
         ? "bad"
         : status === "resolved"
           ? "good"
@@ -92,11 +92,18 @@ function renderStatCard(label: string, value: number, tone: "neutral" | "good" |
 
 function renderToggleForm(params: { mode: "movies" | "season-packs"; enabled: boolean; label: string }): string {
   const nextEnabled = !params.enabled;
-  return `<form action="/dashboard/actions/settings/automation-mode" method="post">
+  return `<div class="toggle-row">
+    <div class="toggle-copy">
+      <strong>${escapeHtml(params.label)}</strong>
+      <span>Current state: ${params.enabled ? "Enabled" : "Disabled"}</span>
+    </div>
+    ${renderStatusBadge(params.enabled ? "enabled" : "disabled")}
+    <form action="/dashboard/actions/settings/automation-mode" method="post">
     <input type="hidden" name="mode" value="${params.mode}" />
     <input type="hidden" name="enabled" value="${nextEnabled ? "true" : "false"}" />
     <button type="submit">${nextEnabled ? `Enable ${escapeHtml(params.label)}` : `Disable ${escapeHtml(params.label)}`}</button>
-  </form>`;
+    </form>
+  </div>`;
 }
 
 function renderJobRows(jobs: AutomationJobRow[]): string {
@@ -349,6 +356,27 @@ export function renderDashboardPage(params: DashboardPageParams): string {
         grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 12px;
       }
+      .toggle-row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 12px;
+        align-items: center;
+        padding: 14px;
+        border-radius: 18px;
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.03);
+      }
+      .toggle-copy {
+        display: grid;
+        gap: 6px;
+      }
+      .toggle-copy strong {
+        font-size: 15px;
+      }
+      .toggle-copy span {
+        color: var(--muted);
+        font-size: 13px;
+      }
       button {
         appearance: none;
         border: 0;
@@ -467,6 +495,9 @@ export function renderDashboardPage(params: DashboardPageParams): string {
           grid-template-columns: 1fr;
         }
         .inline-grid {
+          grid-template-columns: 1fr;
+        }
+        .toggle-row {
           grid-template-columns: 1fr;
         }
       }
