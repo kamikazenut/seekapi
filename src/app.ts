@@ -2,6 +2,7 @@ import express, { type NextFunction, type Request, type Response } from "express
 import { ZodError, z } from "zod";
 
 import { automationConfigured, env } from "./lib/config";
+import { getAutoGrabberStatus, triggerAutoGrabberCycle } from "./lib/auto-grabber";
 import { getAutomationJobStatus, queueAutomationTarget, queueSeasonAutomationTarget } from "./lib/automation";
 import { containsAdultTerms, isAdultTmdbMetadata } from "./lib/content-safety";
 import { renderDashboardPage } from "./lib/dashboard-page";
@@ -290,6 +291,7 @@ app.get(
       listRecentVideoSources(18),
       getAutomationModeSettings()
     ]);
+    const autoGrabberStatus = getAutoGrabberStatus();
 
     response
       .type("html")
@@ -299,6 +301,7 @@ app.get(
           automationEnabled: automationConfigured,
           autoMovieEnabled: automationModes.moviesEnabled,
           autoSeasonPackEnabled: automationModes.seasonPacksEnabled,
+          autoGrabberStatus,
           stats,
           jobs,
           sources,
@@ -330,9 +333,29 @@ app.post(
       return;
     }
 
+    if (enabled) {
+      triggerAutoGrabberCycle();
+    }
+
     dashboardRedirect(response, {
-      notice: mode === "movies" ? `Movie auto-grabber ${enabled ? "enabled" : "disabled"}.` : `Season-pack auto-grabber ${enabled ? "enabled" : "disabled"}.`
+      notice:
+        mode === "movies"
+          ? `Movie auto-grabber ${enabled ? "enabled" : "disabled"}${enabled ? ". Immediate scan started." : "."}`
+          : `Season-pack auto-grabber ${enabled ? "enabled" : "disabled"}${enabled ? ". Immediate scan started." : "."}`
     });
+  })
+);
+
+app.post(
+  "/dashboard/actions/automation/run-now",
+  asyncDashboardRoute(async (_request, response) => {
+    if (!automationConfigured) {
+      dashboardRedirect(response, { error: "Automation is not configured yet." });
+      return;
+    }
+
+    triggerAutoGrabberCycle();
+    dashboardRedirect(response, { notice: "Auto-grabber scan started." });
   })
 );
 

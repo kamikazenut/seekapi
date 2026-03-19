@@ -8,10 +8,15 @@ import {
   listSeasonSources
 } from "./repository";
 import { fetchPopularMovies, fetchPopularShows, fetchSeasonEpisodesByTmdbId, fetchTitleByTmdbId } from "./tmdb";
-import type { AutomationTarget, TmdbTitleRecord } from "./types";
+import type { AutoGrabberStatus, AutomationTarget, TmdbTitleRecord } from "./types";
 
 let intervalHandle: NodeJS.Timeout | null = null;
 let running = false;
+let lastStartedAt: string | null = null;
+let lastFinishedAt: string | null = null;
+let lastQueuedMovies = 0;
+let lastQueuedSeasonPacks = 0;
+let lastError: string | null = null;
 
 function hasReleased(releaseDate: string | null | undefined): boolean {
   if (!releaseDate) {
@@ -65,7 +70,9 @@ function latestRegularSeasonNumber(title: TmdbTitleRecord): number | null {
   return candidates.length > 0 ? Math.max(...candidates) : null;
 }
 
-async function runMovieAutoGrabber(): Promise<void> {
+async function runMovieAutoGrabber(): Promise<number> {
+  let queued = 0;
+
   for (let page = 1; page <= env.AUTO_GRAB_MOVIE_PAGES; page += 1) {
     const movies = await fetchPopularMovies(page);
     for (const movie of movies) {
@@ -86,12 +93,19 @@ async function runMovieAutoGrabber(): Promise<void> {
         continue;
       }
 
-      await queueAutomationTarget(target, "auto-grabber-movie");
+      const job = await queueAutomationTarget(target, "auto-grabber-movie");
+      if (job) {
+        queued += 1;
+      }
     }
   }
+
+  return queued;
 }
 
-async function runSeasonPackAutoGrabber(): Promise<void> {
+async function runSeasonPackAutoGrabber(): Promise<number> {
+  let queued = 0;
+
   for (let page = 1; page <= env.AUTO_GRAB_TV_PAGES; page += 1) {
     const shows = await fetchPopularShows(page);
     for (const show of shows) {
@@ -134,9 +148,14 @@ async function runSeasonPackAutoGrabber(): Promise<void> {
         continue;
       }
 
-      await queueSeasonAutomationTarget(show.tmdbId, seasonNumber, "auto-grabber-season-pack");
+      const job = await queueSeasonAutomationTarget(show.tmdbId, seasonNumber, "auto-grabber-season-pack");
+      if (job) {
+        queued += 1;
+      }
     }
   }
+
+  return queued;
 }
 
 async function processAutoGrabberCycle(): Promise<void> {
@@ -145,21 +164,47 @@ async function processAutoGrabberCycle(): Promise<void> {
   }
 
   running = true;
+  lastStartedAt = new Date().toISOString();
+  lastError = null;
 
   try {
     const modes = await getAutomationModeSettings();
+    let queuedMovies = 0;
+    let queuedSeasonPacks = 0;
+
     if (modes.moviesEnabled) {
-      await runMovieAutoGrabber();
+      queuedMovies = await runMovieAutoGrabber();
     }
 
     if (modes.seasonPacksEnabled) {
-      await runSeasonPackAutoGrabber();
+      queuedSeasonPacks = await runSeasonPackAutoGrabber();
     }
+
+    lastQueuedMovies = queuedMovies;
+    lastQueuedSeasonPacks = queuedSeasonPacks;
+    lastFinishedAt = new Date().toISOString();
   } catch (error) {
-    console.error("Auto-grabber cycle failed:", error instanceof Error ? error.message : error);
+    lastError = error instanceof Error ? error.message : String(error);
+    console.error("Auto-grabber cycle failed:", lastError);
   } finally {
     running = false;
   }
+}
+
+export function getAutoGrabberStatus(): AutoGrabberStatus {
+  return {
+    running,
+    lastStartedAt,
+    lastFinishedAt,
+    lastQueuedMovies,
+    lastQueuedSeasonPacks,
+    lastError,
+    intervalMs: env.AUTO_GRAB_INTERVAL_MS
+  };
+}
+
+export function triggerAutoGrabberCycle(): void {
+  void processAutoGrabberCycle();
 }
 
 export function startAutoGrabberWorker(): void {
@@ -168,8 +213,8 @@ export function startAutoGrabberWorker(): void {
   }
 
   intervalHandle = setInterval(() => {
-    void processAutoGrabberCycle();
+    triggerAutoGrabberCycle();
   }, env.AUTO_GRAB_INTERVAL_MS);
 
-  void processAutoGrabberCycle();
+  triggerAutoGrabberCycle();
 }

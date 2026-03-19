@@ -131,3 +131,13 @@ export interface AutomationModeSettings {
   moviesEnabled: boolean;
   seasonPacksEnabled: boolean;
 }
+
+export interface AutoGrabberStatus {
+  running: boolean;
+  lastStartedAt: string | null;
+  lastFinishedAt: string | null;
+  lastQueuedMovies: number;
+  lastQueuedSeasonPacks: number;
+  lastError: string | null;
+  intervalMs: number;
+}

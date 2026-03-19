@@ -1,10 +1,11 @@
-import type { AutomationJobRow, DashboardStats, VideoSourceRow } from "./types";
+import type { AutoGrabberStatus, AutomationJobRow, DashboardStats, VideoSourceRow } from "./types";
 
 interface DashboardPageParams {
   siteName: string;
   automationEnabled: boolean;
   autoMovieEnabled: boolean;
   autoSeasonPackEnabled: boolean;
+  autoGrabberStatus: AutoGrabberStatus;
   stats: DashboardStats;
   jobs: AutomationJobRow[];
   sources: VideoSourceRow[];
@@ -88,6 +89,20 @@ function renderStatCard(label: string, value: number, tone: "neutral" | "good" |
     <span>${escapeHtml(label)}</span>
     <strong>${value}</strong>
   </article>`;
+}
+
+function formatInterval(intervalMs: number): string {
+  if (intervalMs % (60 * 60 * 1000) === 0) {
+    const hours = intervalMs / (60 * 60 * 1000);
+    return `Every ${hours}h`;
+  }
+
+  if (intervalMs % (60 * 1000) === 0) {
+    const minutes = intervalMs / (60 * 1000);
+    return `Every ${minutes}m`;
+  }
+
+  return `Every ${Math.round(intervalMs / 1000)}s`;
 }
 
 function renderToggleForm(params: { mode: "movies" | "season-packs"; enabled: boolean; label: string }): string {
@@ -471,6 +486,10 @@ export function renderDashboardPage(params: DashboardPageParams): string {
         color: var(--muted);
         font-size: 13px;
       }
+      .actions-row {
+        display: grid;
+        gap: 12px;
+      }
       @media (max-width: 1200px) {
         .stats {
           grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -543,6 +562,19 @@ export function renderDashboardPage(params: DashboardPageParams): string {
             <div class="form-grid">
               ${renderToggleForm({ mode: "movies", enabled: params.autoMovieEnabled, label: "Movie Auto Grabber" })}
               ${renderToggleForm({ mode: "season-packs", enabled: params.autoSeasonPackEnabled, label: "Season-Pack Auto Grabber" })}
+              <div class="actions-row">
+                <form action="/dashboard/actions/automation/run-now" method="post">
+                  <button type="submit">Run Auto Grabber Now</button>
+                </form>
+                <div class="meta-list">
+                  <div class="meta-item"><span>Worker state</span><strong>${params.autoGrabberStatus.running ? "Running" : "Idle"}</strong></div>
+                  <div class="meta-item"><span>Last started</span><strong>${params.autoGrabberStatus.lastStartedAt ? escapeHtml(formatDate(params.autoGrabberStatus.lastStartedAt)) : "Never"}</strong></div>
+                  <div class="meta-item"><span>Last finished</span><strong>${params.autoGrabberStatus.lastFinishedAt ? escapeHtml(formatDate(params.autoGrabberStatus.lastFinishedAt)) : "Never"}</strong></div>
+                  <div class="meta-item"><span>Last queued</span><strong>${params.autoGrabberStatus.lastQueuedMovies} movies / ${params.autoGrabberStatus.lastQueuedSeasonPacks} seasons</strong></div>
+                  <div class="meta-item"><span>Interval</span><strong>${escapeHtml(formatInterval(params.autoGrabberStatus.intervalMs))}</strong></div>
+                  <div class="meta-item"><span>Last error</span><strong>${escapeHtml(params.autoGrabberStatus.lastError ?? "None")}</strong></div>
+                </div>
+              </div>
             </div>
           </article>
 
