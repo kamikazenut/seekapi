@@ -1,6 +1,7 @@
 import { env } from "./config";
 import { supabase } from "./supabase";
 import type {
+  AutomationModeSettings,
   AutomationJobRow,
   AutomationJobStatus,
   AutomationTarget,
@@ -19,6 +20,8 @@ import type {
 
 const ACTIVE_AUTOMATION_STATUSES: AutomationJobStatus[] = ["queued", "searching", "submitting", "polling", "downloading"];
 const DUE_AUTOMATION_STATUSES: AutomationJobStatus[] = ["queued", "searching", "submitting", "polling"];
+const APP_SETTING_AUTO_GRAB_MOVIES = "auto_grab_movies_enabled";
+const APP_SETTING_AUTO_GRAB_SEASON_PACKS = "auto_grab_season_packs_enabled";
 
 function fallbackEmbedUrl(provider: Provider, providerVideoId: string): string {
   if (provider === "seekstream") {
@@ -69,6 +72,33 @@ function readJobTorrentHash(metadata: Record<string, unknown> | null): string | 
 
 function buildAutomationJobSelectQuery() {
   return "id, media_type, tmdb_id, season_number, episode_number, status, trigger_source, attempt_count, release_title, release_guid, release_link, seek_task_id, seek_video_ids, last_error, next_attempt_at, metadata, created_at, updated_at";
+}
+
+async function getBooleanAppSetting(key: string, fallback: boolean): Promise<boolean> {
+  const { data, error } = await supabase.from("app_settings").select("value").eq("key", key).maybeSingle<{ value: unknown }>();
+  throwIfError(error);
+
+  if (!data || typeof data.value !== "object" || data.value === null || !("enabled" in data.value)) {
+    return fallback;
+  }
+
+  return Boolean((data.value as { enabled?: unknown }).enabled);
+}
+
+async function setBooleanAppSetting(key: string, enabled: boolean): Promise<void> {
+  const { error } = await supabase.from("app_settings").upsert(
+    {
+      key,
+      value: {
+        enabled
+      }
+    },
+    {
+      onConflict: "key"
+    }
+  );
+
+  throwIfError(error);
 }
 
 export async function upsertTitle(title: TmdbTitleRecord): Promise<void> {
@@ -227,6 +257,23 @@ export async function listEpisodeSources(
   return data ?? [];
 }
 
+export async function listSeasonSources(showTmdbId: number, seasonNumber: number): Promise<VideoSourceRow[]> {
+  const { data, error } = await supabase
+    .from("video_sources")
+    .select(
+      "id, provider, provider_video_id, embed_url, torrent_hash, torrent_name, content_path, media_type, tmdb_id, season_number, episode_number, guessed_title, guessed_year, resolution, file_name, status, callback_payload, tmdb_payload, updated_at"
+    )
+    .eq("status", "resolved")
+    .eq("media_type", "tv")
+    .eq("tmdb_id", showTmdbId)
+    .eq("season_number", seasonNumber)
+    .not("episode_number", "is", null)
+    .returns<VideoSourceRow[]>();
+
+  throwIfError(error);
+  return data ?? [];
+}
+
 function resolutionRank(resolution: string | null): number {
   const ranks: Record<string, number> = {
     "2160p": 4,
@@ -327,6 +374,28 @@ export async function getAutomationJob(jobId: string): Promise<AutomationJobRow 
     .select(buildAutomationJobSelectQuery())
     .eq("id", jobId)
     .maybeSingle<AutomationJobRow>();
+
+  throwIfError(error);
+  return data;
+}
+
+export async function getLatestAutomationJobForTarget(target: AutomationTarget): Promise<AutomationJobRow | null> {
+  let query = supabase
+    .from("automation_jobs")
+    .select(buildAutomationJobSelectQuery())
+    .eq("media_type", target.mediaType)
+    .eq("tmdb_id", target.tmdbId)
+    .order("updated_at", { ascending: false })
+    .limit(1);
+
+  if (target.mediaType === "tv") {
+    query = query.eq("season_number", target.seasonNumber ?? null);
+    query = target.episodeNumber === undefined ? query.is("episode_number", null) : query.eq("episode_number", target.episodeNumber);
+  } else {
+    query = query.is("season_number", null).is("episode_number", null);
+  }
+
+  const { data, error } = await query.maybeSingle<AutomationJobRow>();
 
   throwIfError(error);
   return data;
@@ -447,6 +516,27 @@ export async function listRecentAutomationJobs(limit = 20): Promise<AutomationJo
 
   throwIfError(error);
   return data ?? [];
+}
+
+export async function getAutomationModeSettings(): Promise<AutomationModeSettings> {
+  const [moviesEnabled, seasonPacksEnabled] = await Promise.all([
+    getBooleanAppSetting(APP_SETTING_AUTO_GRAB_MOVIES, env.AUTOMATION_AUTO_MOVIES),
+    getBooleanAppSetting(APP_SETTING_AUTO_GRAB_SEASON_PACKS, env.AUTOMATION_AUTO_SEASON_PACKS)
+  ]);
+
+  return {
+    moviesEnabled,
+    seasonPacksEnabled
+  };
+}
+
+export async function setAutomationModeSettings(patch: Partial<AutomationModeSettings>): Promise<AutomationModeSettings> {
+  await Promise.all([
+    patch.moviesEnabled === undefined ? Promise.resolve() : setBooleanAppSetting(APP_SETTING_AUTO_GRAB_MOVIES, patch.moviesEnabled),
+    patch.seasonPacksEnabled === undefined ? Promise.resolve() : setBooleanAppSetting(APP_SETTING_AUTO_GRAB_SEASON_PACKS, patch.seasonPacksEnabled)
+  ]);
+
+  return getAutomationModeSettings();
 }
 
 export async function listRecentVideoSources(limit = 20): Promise<VideoSourceRow[]> {

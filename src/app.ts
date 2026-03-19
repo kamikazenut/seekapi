@@ -2,7 +2,7 @@ import express, { type NextFunction, type Request, type Response } from "express
 import { ZodError, z } from "zod";
 
 import { automationConfigured, env } from "./lib/config";
-import { getAutomationJobStatus, queueAutomationTarget } from "./lib/automation";
+import { getAutomationJobStatus, queueAutomationTarget, queueSeasonAutomationTarget } from "./lib/automation";
 import { containsAdultTerms, isAdultTmdbMetadata } from "./lib/content-safety";
 import { renderDashboardPage } from "./lib/dashboard-page";
 import { renderEmbedPage } from "./lib/embed-page";
@@ -11,6 +11,7 @@ import {
   completeActiveAutomationJob,
   completeAutomationJob,
   findRecentAutomationJobByTorrentHash,
+  getAutomationModeSettings,
   getDashboardStats,
   getCachedEpisode,
   getCachedTitle,
@@ -19,6 +20,7 @@ import {
   listRecentAutomationJobs,
   listRecentVideoSources,
   pickBestSource,
+  setAutomationModeSettings,
   upsertEpisode,
   upsertTitle,
   upsertVideoSource
@@ -173,39 +175,6 @@ async function hydrateEpisode(showTmdbId: number, seasonNumber: number, episodeN
   return getCachedEpisode(showTmdbId, seasonNumber, episodeNumber);
 }
 
-async function queueSeasonAutomation(showTmdbId: number, seasonNumber: number, triggerSource: string): Promise<AutomationJobRow | null> {
-  const title = await hydrateTitle("tv", showTmdbId);
-  if (!title) {
-    const error = new Error(`TMDB season ${formatSeasonTarget(showTmdbId, seasonNumber)} could not be loaded.`);
-    (error as Error & { status?: number }).status = 404;
-    throw error;
-  }
-
-  if (isAdultTmdbMetadata(title.metadata) || containsAdultTerms(title.title, title.original_title)) {
-    const error = new Error("Adult content is blocked by the filter.");
-    (error as Error & { status?: number }).status = 422;
-    throw error;
-  }
-
-  const episodes = await fetchSeasonEpisodesByTmdbId(showTmdbId, seasonNumber);
-  if (episodes.length === 0) {
-    const error = new Error(`No TMDB episodes were found for ${formatSeasonTarget(showTmdbId, seasonNumber)}.`);
-    (error as Error & { status?: number }).status = 404;
-    throw error;
-  }
-
-  await Promise.all(episodes.map(async (episode) => upsertEpisode(episode)));
-
-  return queueAutomationTarget(
-    {
-      mediaType: "tv",
-      tmdbId: showTmdbId,
-      seasonNumber
-    },
-    triggerSource
-  );
-}
-
 async function resolveMatchFromAutomationJob(job: AutomationJobRow, guess: ReturnType<typeof extractMediaGuess>): Promise<ResolvedMediaMatch | null> {
   const title = await hydrateTitle(job.media_type, job.tmdb_id);
   if (!title) {
@@ -298,10 +267,11 @@ app.get("/", (_request, response) => {
 app.get(
   "/dashboard",
   asyncRoute(async (request, response) => {
-    const [stats, jobs, sources] = await Promise.all([
+    const [stats, jobs, sources, automationModes] = await Promise.all([
       getDashboardStats(),
       listRecentAutomationJobs(18),
-      listRecentVideoSources(18)
+      listRecentVideoSources(18),
+      getAutomationModeSettings()
     ]);
 
     response
@@ -310,6 +280,8 @@ app.get(
         renderDashboardPage({
           siteName: env.SITE_NAME,
           automationEnabled: automationConfigured,
+          autoMovieEnabled: automationModes.moviesEnabled,
+          autoSeasonPackEnabled: automationModes.seasonPacksEnabled,
           stats,
           jobs,
           sources,
@@ -317,6 +289,25 @@ app.get(
           error: getSingleQuery(request.query.error)
         })
       );
+  })
+);
+
+app.post(
+  "/dashboard/actions/settings/automation-mode",
+  asyncRoute(async (request, response) => {
+    const mode = getSingleBodyValue(request.body.mode, "mode");
+    const enabled = getSingleBodyValue(request.body.enabled, "enabled") === "true";
+
+    if (mode !== "movies" && mode !== "season-packs") {
+      dashboardRedirect(response, { error: "Invalid automation mode." });
+      return;
+    }
+
+    await setAutomationModeSettings(mode === "movies" ? { moviesEnabled: enabled } : { seasonPacksEnabled: enabled });
+
+    dashboardRedirect(response, {
+      notice: mode === "movies" ? `Movie auto-grabber ${enabled ? "enabled" : "disabled"}.` : `Season-pack auto-grabber ${enabled ? "enabled" : "disabled"}.`
+    });
   })
 );
 
@@ -356,7 +347,7 @@ app.post(
 
     const tmdbId = parsePositiveInt(getSingleBodyValue(request.body.tmdbId, "tmdbId"), "tmdbId");
     const seasonNumber = parsePositiveInt(getSingleBodyValue(request.body.season, "season"), "season");
-    const job = await queueSeasonAutomation(tmdbId, seasonNumber, "manual-dashboard-season");
+    const job = await queueSeasonAutomationTarget(tmdbId, seasonNumber, "manual-dashboard-season");
 
     if (!job) {
       dashboardRedirect(response, { error: "Automation job could not be created." });
@@ -436,7 +427,7 @@ app.post(
   asyncRoute(async (request, response) => {
     const tmdbId = parsePositiveInt(getSingleParam(request.params.tmdbId, "tmdbId"), "tmdbId");
     const seasonNumber = parsePositiveInt(getSingleParam(request.params.season, "season"), "season");
-    const job = await queueSeasonAutomation(tmdbId, seasonNumber, "manual-season");
+    const job = await queueSeasonAutomationTarget(tmdbId, seasonNumber, "manual-season");
 
     if (!job) {
       response.status(503).json({
@@ -577,12 +568,15 @@ app.get(
   "/embed/movie/:tmdbId",
   asyncRoute(async (request, response) => {
     const tmdbId = parsePositiveInt(getSingleParam(request.params.tmdbId, "tmdbId"), "tmdbId");
+    const automationModes = await getAutomationModeSettings();
     const title = await hydrateTitle("movie", tmdbId);
     const source = pickBestSource(await listMovieSources(tmdbId));
     const blocked = title ? isAdultTmdbMetadata(title.metadata) || containsAdultTerms(title.title, title.original_title) : false;
     const job = source
       ? null
       : blocked
+        ? null
+        : !automationModes.moviesEnabled
         ? null
         : await queueAutomationTarget(
           {
@@ -623,6 +617,7 @@ app.get(
     const tmdbId = parsePositiveInt(getSingleParam(request.params.tmdbId, "tmdbId"), "tmdbId");
     const seasonNumber = parsePositiveInt(getSingleParam(request.params.season, "season"), "season");
     const episodeNumber = parsePositiveInt(getSingleParam(request.params.episode, "episode"), "episode");
+    const automationModes = await getAutomationModeSettings();
     const title = await hydrateTitle("tv", tmdbId);
     const episode = await hydrateEpisode(tmdbId, seasonNumber, episodeNumber);
     const source = pickBestSource(await listEpisodeSources(tmdbId, seasonNumber, episodeNumber));
@@ -631,15 +626,17 @@ app.get(
       ? null
       : blocked
         ? null
-        : await queueAutomationTarget(
-          {
-            mediaType: "tv",
-            tmdbId,
-            seasonNumber,
-            episodeNumber
-          },
-          "embed"
-        );
+        : automationModes.seasonPacksEnabled
+          ? await queueSeasonAutomationTarget(tmdbId, seasonNumber, "embed-season")
+          : await queueAutomationTarget(
+            {
+              mediaType: "tv",
+              tmdbId,
+              seasonNumber,
+              episodeNumber
+            },
+            "embed"
+          );
 
     response
       .status(source ? 200 : 404)

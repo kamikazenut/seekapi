@@ -126,3 +126,8 @@ export interface DashboardStats {
   failedJobs: number;
   completedJobs: number;
 }
+
+export interface AutomationModeSettings {
+  moviesEnabled: boolean;
+  seasonPacksEnabled: boolean;
+}

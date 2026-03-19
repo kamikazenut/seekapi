@@ -16,7 +16,7 @@ import {
   upsertVideoSource
 } from "./repository";
 import { createSeekAdvancedUploadTask, getSeekAdvancedUploadTask, getSeekVideoDetail } from "./seek";
-import { fetchEpisodeByTmdbId, fetchTitleByTmdbId, resolveMediaMatch } from "./tmdb";
+import { fetchEpisodeByTmdbId, fetchSeasonEpisodesByTmdbId, fetchTitleByTmdbId, resolveMediaMatch } from "./tmdb";
 import type {
   AutomationJobRow,
   AutomationTarget,
@@ -398,6 +398,48 @@ export async function queueAutomationTarget(target: AutomationTarget, triggerSou
   const job = active ?? (await createAutomationJob(target, triggerSource));
   void processJob(job.id);
   return job;
+}
+
+export async function queueSeasonAutomationTarget(
+  showTmdbId: number,
+  seasonNumber: number,
+  triggerSource: string
+): Promise<AutomationJobRow | null> {
+  if (!automationConfigured) {
+    return null;
+  }
+
+  const title = await hydrateTitle({
+    mediaType: "tv",
+    tmdbId: showTmdbId,
+    seasonNumber
+  });
+  if (!title) {
+    throw new Error(`TMDB season ${showTmdbId} S${String(seasonNumber).padStart(2, "0")} could not be loaded.`);
+  }
+
+  if (isAdultTmdbMetadata(title.metadata) || containsAdultTerms(title.title, title.original_title)) {
+    const error = new Error("Adult content is blocked by the filter.");
+    (error as Error & { status?: number }).status = 422;
+    throw error;
+  }
+
+  const episodes = await fetchSeasonEpisodesByTmdbId(showTmdbId, seasonNumber);
+  if (episodes.length === 0) {
+    const error = new Error(`No TMDB episodes were found for ${showTmdbId} S${String(seasonNumber).padStart(2, "0")}.`);
+    (error as Error & { status?: number }).status = 404;
+    throw error;
+  }
+
+  await Promise.all(episodes.map(async (episode) => upsertEpisode(episode)));
+  return queueAutomationTarget(
+    {
+      mediaType: "tv",
+      tmdbId: showTmdbId,
+      seasonNumber
+    },
+    triggerSource
+  );
 }
 
 export async function getAutomationJobStatus(jobId: string): Promise<AutomationJobRow | null> {

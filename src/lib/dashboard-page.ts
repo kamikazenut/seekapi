@@ -3,6 +3,8 @@ import type { AutomationJobRow, DashboardStats, VideoSourceRow } from "./types";
 interface DashboardPageParams {
   siteName: string;
   automationEnabled: boolean;
+  autoMovieEnabled: boolean;
+  autoSeasonPackEnabled: boolean;
   stats: DashboardStats;
   jobs: AutomationJobRow[];
   sources: VideoSourceRow[];
@@ -86,6 +88,15 @@ function renderStatCard(label: string, value: number, tone: "neutral" | "good" |
     <span>${escapeHtml(label)}</span>
     <strong>${value}</strong>
   </article>`;
+}
+
+function renderToggleForm(params: { mode: "movies" | "season-packs"; enabled: boolean; label: string }): string {
+  const nextEnabled = !params.enabled;
+  return `<form action="/dashboard/actions/settings/automation-mode" method="post">
+    <input type="hidden" name="mode" value="${params.mode}" />
+    <input type="hidden" name="enabled" value="${nextEnabled ? "true" : "false"}" />
+    <button type="submit">${nextEnabled ? `Enable ${escapeHtml(params.label)}` : `Disable ${escapeHtml(params.label)}`}</button>
+  </form>`;
 }
 
 function renderJobRows(jobs: AutomationJobRow[]): string {
@@ -475,6 +486,8 @@ export function renderDashboardPage(params: DashboardPageParams): string {
           <div class="pill"><span class="dot"></span><strong>${escapeHtml(automationState)}</strong></div>
           <div class="meta-list">
             <div class="meta-item"><span>Auto queue on embed miss</span><strong>${params.automationEnabled ? "On" : "Off"}</strong></div>
+            <div class="meta-item"><span>Movie auto mode</span><strong>${params.autoMovieEnabled ? "On" : "Off"}</strong></div>
+            <div class="meta-item"><span>Season-pack auto mode</span><strong>${params.autoSeasonPackEnabled ? "On" : "Off"}</strong></div>
             <div class="meta-item"><span>Manual movie trigger</span><strong>POST + form</strong></div>
             <div class="meta-item"><span>Manual TV trigger</span><strong>POST + form</strong></div>
             <div class="meta-item"><span>Refresh</span><a href="/dashboard">Reload</a></div>
@@ -493,6 +506,15 @@ export function renderDashboardPage(params: DashboardPageParams): string {
 
       <section class="layout">
         <div class="stack">
+          <article class="card section">
+            <h2>Auto Grabber</h2>
+            <p>These toggles control the background TMDB grabber. When enabled, the service scans TMDB popular pages and queues jobs without anyone having to open an embed route first.</p>
+            <div class="form-grid">
+              ${renderToggleForm({ mode: "movies", enabled: params.autoMovieEnabled, label: "Movie Auto Grabber" })}
+              ${renderToggleForm({ mode: "season-packs", enabled: params.autoSeasonPackEnabled, label: "Season-Pack Auto Grabber" })}
+            </div>
+          </article>
+
           <article class="card section">
             <h2>Manual Movie Trigger</h2>
             <p>Queue a movie job by TMDB id. This uses the same Jackett automation path as the automatic embed miss flow.</p>
@@ -547,7 +569,7 @@ export function renderDashboardPage(params: DashboardPageParams): string {
 
           <article class="card section">
             <h2>Auto Notes</h2>
-            <p>Automatic mode is driven by the embed routes. If someone opens a missing <code>/embed/movie/:tmdbId</code> or <code>/embed/tv/:tmdbId/:season/:episode</code>, the API can create an automation job without using this page.</p>
+            <p>Automatic mode is driven by the embed routes. Movie misses respect the movie auto toggle. TV episode misses can either queue a single episode job or, when season-pack auto mode is on, queue a whole-season job instead.</p>
             <p class="footer-note">This dashboard is server-rendered inside the same Node service, so there is no separate frontend build step.</p>
           </article>
         </div>

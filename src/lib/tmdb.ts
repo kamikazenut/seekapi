@@ -18,6 +18,24 @@ interface SearchResponse {
   results: SearchResult[];
 }
 
+export interface TmdbCatalogMovie {
+  tmdbId: number;
+  title: string;
+  originalTitle: string | null;
+  releaseDate: string | null;
+  adult: boolean;
+  overview: string | null;
+}
+
+export interface TmdbCatalogShow {
+  tmdbId: number;
+  name: string;
+  originalName: string | null;
+  firstAirDate: string | null;
+  adult: boolean;
+  overview: string | null;
+}
+
 function normalizeTitle(input: string): string {
   return input.toLowerCase().replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
 }
@@ -328,6 +346,70 @@ export async function fetchSeasonEpisodesByTmdbId(showTmdbId: number, seasonNumb
         return mapEpisode(showTmdbId, seasonNumber, episodeNumber, episode as Record<string, unknown>);
       })
       .filter((episode): episode is TmdbEpisodeRecord => Boolean(episode));
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchPopularMovies(page = 1): Promise<TmdbCatalogMovie[]> {
+  if (!tmdbConfigured) {
+    return [];
+  }
+
+  try {
+    const response = await tmdbRequest<{
+      results?: Array<Record<string, unknown>>;
+    }>("/movie/popular", { page });
+
+    return (response.results ?? [])
+      .map((item) => {
+        const tmdbId = typeof item.id === "number" ? item.id : null;
+        if (!tmdbId) {
+          return null;
+        }
+
+        return {
+          tmdbId,
+          title: typeof item.title === "string" ? item.title : `Movie ${tmdbId}`,
+          originalTitle: typeof item.original_title === "string" ? item.original_title : null,
+          releaseDate: typeof item.release_date === "string" ? item.release_date : null,
+          adult: item.adult === true,
+          overview: typeof item.overview === "string" ? item.overview : null
+        };
+      })
+      .filter((item): item is TmdbCatalogMovie => Boolean(item));
+  } catch {
+    return [];
+  }
+}
+
+export async function fetchPopularShows(page = 1): Promise<TmdbCatalogShow[]> {
+  if (!tmdbConfigured) {
+    return [];
+  }
+
+  try {
+    const response = await tmdbRequest<{
+      results?: Array<Record<string, unknown>>;
+    }>("/tv/popular", { page });
+
+    return (response.results ?? [])
+      .map((item) => {
+        const tmdbId = typeof item.id === "number" ? item.id : null;
+        if (!tmdbId) {
+          return null;
+        }
+
+        return {
+          tmdbId,
+          name: typeof item.name === "string" ? item.name : `TV ${tmdbId}`,
+          originalName: typeof item.original_name === "string" ? item.original_name : null,
+          firstAirDate: typeof item.first_air_date === "string" ? item.first_air_date : null,
+          adult: item.adult === true,
+          overview: typeof item.overview === "string" ? item.overview : null
+        };
+      })
+      .filter((item): item is TmdbCatalogShow => Boolean(item));
   } catch {
     return [];
   }

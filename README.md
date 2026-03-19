@@ -11,6 +11,11 @@ It does four jobs:
 
 It also includes a dashboard and automatic acquisition flow.
 
+It now also includes a TMDB auto-grabber. When enabled from the dashboard, the service periodically scans TMDB popular pages and queues jobs by itself:
+
+- movie auto-grabber: popular released movies
+- season-pack auto-grabber: the latest aired regular season for popular TV shows
+
 The default automation pipeline is:
 
 1. TMDB id requested from the dashboard or an `/embed/...` miss
@@ -53,7 +58,7 @@ The default automation pipeline is:
 
 1. Reapply [`supabase/schema.sql`](/C:/Users/mrgli/Desktop/seekshare%20api/supabase/schema.sql) in Supabase.
 
-This matters even if you already ran an older version. The SQL now updates the `automation_jobs` status constraint and active-job index so `downloading` jobs work correctly.
+This matters even if you already ran an older version. The SQL now updates the `automation_jobs` status constraint, season-job scope, active-job index, and creates the `app_settings` table used by dashboard toggles.
 
 2. Copy [.env.example](/C:/Users/mrgli/Desktop/seekshare%20api/.env.example) to `.env` and fill the values you actually use.
 
@@ -133,6 +138,12 @@ Automation:
   - `qbittorrent` is the default and uses the Ultra/qBittorrent completion hook
   - `seek` keeps the older direct Seek advanced-upload path
 - `AUTOMATION_ENABLED`
+- `AUTOMATION_AUTO_MOVIES`
+- `AUTOMATION_AUTO_SEASON_PACKS`
+- `AUTO_GRAB_INTERVAL_MS`
+- `AUTO_GRAB_MOVIE_PAGES`
+- `AUTO_GRAB_TV_PAGES`
+- `AUTO_GRAB_REQUEUE_HOURS`
 - `AUTOMATION_POLL_INTERVAL_MS`
 - `AUTOMATION_RETRY_MINUTES`
 - `AUTOMATION_MAX_ATTEMPTS`
@@ -153,3 +164,4 @@ Content safety:
 - `seekstream` remains the preferred provider on embed pages, with `bigshare` as fallback.
 - The callback route accepts either `Authorization: Bearer <token>` or `x-callback-token` when callback auth is enabled.
 - If TMDB is not configured, unresolved callbacks are still stored, but `/embed/...` pages will not be able to resolve them automatically.
+- The movie and season-pack toggle buttons in the dashboard persist in Supabase via `app_settings`, so they survive restarts.

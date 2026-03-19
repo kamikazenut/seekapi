@@ -113,6 +113,13 @@ create table if not exists public.automation_jobs (
   )
 );
 
+create table if not exists public.app_settings (
+  key text primary key,
+  value jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
 do $$
 declare
   existing_status_constraint text;
@@ -182,6 +189,9 @@ create index if not exists video_sources_status_idx
 create index if not exists automation_jobs_due_idx
   on public.automation_jobs (status, next_attempt_at);
 
+create index if not exists app_settings_updated_at_idx
+  on public.app_settings (updated_at desc);
+
 drop index if exists automation_jobs_active_unique_idx;
 
 create unique index if not exists automation_jobs_active_unique_idx
@@ -211,4 +221,9 @@ for each row execute function public.set_updated_at();
 drop trigger if exists automation_jobs_set_updated_at on public.automation_jobs;
 create trigger automation_jobs_set_updated_at
 before update on public.automation_jobs
+for each row execute function public.set_updated_at();
+
+drop trigger if exists app_settings_set_updated_at on public.app_settings;
+create trigger app_settings_set_updated_at
+before update on public.app_settings
 for each row execute function public.set_updated_at();
