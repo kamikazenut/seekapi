@@ -422,7 +422,14 @@ export async function getActiveAutomationJob(target: AutomationTarget): Promise<
   return data;
 }
 
-export async function createAutomationJob(target: AutomationTarget, triggerSource: string): Promise<AutomationJobRow> {
+export async function createAutomationJob(
+  target: AutomationTarget,
+  triggerSource: string,
+  options?: {
+    nextAttemptAt?: string;
+    metadata?: Record<string, unknown> | null;
+  }
+): Promise<AutomationJobRow> {
   const payload = {
     media_type: target.mediaType,
     tmdb_id: target.tmdbId,
@@ -430,7 +437,8 @@ export async function createAutomationJob(target: AutomationTarget, triggerSourc
     episode_number: target.mediaType === "tv" ? target.episodeNumber ?? null : null,
     trigger_source: triggerSource,
     status: "queued",
-    next_attempt_at: new Date().toISOString()
+    next_attempt_at: options?.nextAttemptAt ?? new Date().toISOString(),
+    metadata: options?.metadata ?? {}
   };
 
   const { data, error } = await supabase

@@ -168,6 +168,81 @@ function isSeasonPack(title: string, seasonNumber: number): boolean {
   return seasonPattern.test(title) || wordPattern.test(title);
 }
 
+function extractMentionedSeasonNumbers(title: string): number[] {
+  const values = new Set<number>();
+
+  for (const match of title.matchAll(/\bS(\d{1,2})(?!E\d)\b/gi)) {
+    const seasonNumber = Number(match[1]);
+    if (Number.isInteger(seasonNumber) && seasonNumber > 0) {
+      values.add(seasonNumber);
+    }
+  }
+
+  for (const match of title.matchAll(/\bSeason[ ._-]*(\d{1,2})\b/gi)) {
+    const seasonNumber = Number(match[1]);
+    if (Number.isInteger(seasonNumber) && seasonNumber > 0) {
+      values.add(seasonNumber);
+    }
+  }
+
+  return [...values].sort((left, right) => left - right);
+}
+
+function isMultiSeasonCollectionRelease(title: string, seasonNumber: number): boolean {
+  const seriesPatterns = [
+    /\bcomplete[ ._-]+series\b/i,
+    /\bcomplete[ ._-]+sagas?\b/i,
+    /\bcomplete[ ._-]+box[ ._-]*set\b/i,
+    /\bseries[ ._-]+pack\b/i,
+    /\ball[ ._-]+seasons?\b/i
+  ];
+
+  if (seriesPatterns.some((pattern) => pattern.test(title))) {
+    return true;
+  }
+
+  const seasonRangePatterns = [
+    /\bseasons?\s*\d{1,2}\s*(?:-|to|thru|through|&|and)\s*\d{1,2}\b/i,
+    /\bS\d{1,2}\s*(?:-|to|thru|through|&|and)\s*S?\d{1,2}\b/i
+  ];
+
+  if (seasonRangePatterns.some((pattern) => pattern.test(title))) {
+    return true;
+  }
+
+  const mentionedSeasons = extractMentionedSeasonNumbers(title);
+  return mentionedSeasons.some((value) => value !== seasonNumber);
+}
+
+function isSingleEpisodeRelease(title: string, seasonNumber: number): boolean {
+  const exactEpisodePattern = new RegExp(`\\bS0?${seasonNumber}E\\d{1,3}\\b`, "i");
+  const rangedEpisodePattern = new RegExp(`\\bS0?${seasonNumber}E\\d{1,3}\\s*(?:-|to|thru|through)\\s*E?\\d{1,3}\\b`, "i");
+  const multiEpisodePattern = new RegExp(`\\bS0?${seasonNumber}E\\d{1,3}(?:[ ._\\-]+E\\d{1,3})+\\b`, "i");
+
+  if (rangedEpisodePattern.test(title) || multiEpisodePattern.test(title)) {
+    return false;
+  }
+
+  return exactEpisodePattern.test(title);
+}
+
+function isSeasonCollectionRelease(title: string, seasonNumber: number): boolean {
+  if (isMultiSeasonCollectionRelease(title, seasonNumber)) {
+    return false;
+  }
+
+  const completeSeasonPattern = new RegExp(`\\b(?:Complete|Full)[ ._-]*(?:Season[ ._-]*)?0?${seasonNumber}\\b`, "i");
+  const seasonCompletePattern = new RegExp(`\\b(?:Season[ ._-]*)?0?${seasonNumber}[ ._-]*(?:Complete|Pack|Collection)\\b`, "i");
+  const seasonRangePattern = new RegExp(`\\bS0?${seasonNumber}E\\d{1,3}\\s*(?:-|to|thru|through)\\s*E?\\d{1,3}\\b`, "i");
+  const multiEpisodePattern = new RegExp(`\\bS0?${seasonNumber}E\\d{1,3}(?:[ ._\\-]+E\\d{1,3})+\\b`, "i");
+
+  if (completeSeasonPattern.test(title) || seasonCompletePattern.test(title) || seasonRangePattern.test(title) || multiEpisodePattern.test(title)) {
+    return true;
+  }
+
+  return isSeasonPack(title, seasonNumber) && !isSingleEpisodeRelease(title, seasonNumber);
+}
+
 function extractYearFromTitle(input: string): number | null {
   const match = input.match(/\b(19|20)\d{2}\b/);
   return match ? Number(match[0]) : null;
@@ -248,7 +323,7 @@ function passesTitleGate(
       return false;
     }
 
-    return seasonPack || (guessed.type === "tv" && guessed.seasonNumber === target.seasonNumber);
+    return isSeasonCollectionRelease(resultTitle, target.seasonNumber);
   }
 
   if (guessed.type === "tv" && guessed.seasonNumber !== undefined && guessed.seasonNumber !== target.seasonNumber) {
@@ -305,12 +380,12 @@ function scoreResult(
       score -= 6;
     }
   } else {
-    if (target.seasonNumber !== undefined && isSeasonPack(resultTitle, target.seasonNumber)) {
+    if (target.seasonNumber !== undefined && isSeasonCollectionRelease(resultTitle, target.seasonNumber)) {
       score += 10;
     }
 
     if (guess.type === "tv" && guess.seasonNumber === target.seasonNumber && guess.episodeNumber !== undefined) {
-      score += 4;
+      score -= 8;
     } else if (guess.type === "tv" && guess.seasonNumber !== undefined && guess.seasonNumber !== target.seasonNumber) {
       score -= 6;
     }
@@ -424,6 +499,11 @@ function buildSearchAttempts(
       addAttempt(`tv title ${titleVariant}`, titleVariant, "tvsearch");
       addAttempt(`tv text ${titleVariant} ${seasonLabel}`, `${titleVariant} ${seasonLabel}`, "search");
       addAttempt(`tv text ${titleVariant} ${seasonCode}`, `${titleVariant} ${seasonCode}`, "search");
+      if (target.episodeNumber === undefined) {
+        addAttempt(`tv text ${titleVariant} complete ${seasonLabel}`, `${titleVariant} complete ${seasonLabel}`, "search");
+        addAttempt(`tv text ${titleVariant} complete ${seasonCode}`, `${titleVariant} complete ${seasonCode}`, "search");
+        addAttempt(`tv text ${titleVariant} ${seasonLabel} pack`, `${titleVariant} ${seasonLabel} pack`, "search");
+      }
       if (target.episodeNumber !== undefined) {
         addAttempt(`tv text ${titleVariant} ${episodeCode}`, `${titleVariant} ${episodeCode}`, "search");
       }

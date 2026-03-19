@@ -44,9 +44,9 @@ async function shouldSkipTarget(target: AutomationTarget): Promise<boolean> {
   return true;
 }
 
-function latestRegularSeasonNumber(title: TmdbTitleRecord): number | null {
+function listRegularSeasonNumbers(title: TmdbTitleRecord): number[] {
   const seasons = Array.isArray(title.metadata.seasons) ? title.metadata.seasons : [];
-  const candidates = seasons
+  return seasons
     .map((season) => {
       if (!season || typeof season !== "object") {
         return null;
@@ -66,9 +66,8 @@ function latestRegularSeasonNumber(title: TmdbTitleRecord): number | null {
 
       return seasonNumber;
     })
-    .filter((value): value is number => value !== null);
-
-  return candidates.length > 0 ? Math.max(...candidates) : null;
+    .filter((value): value is number => value !== null)
+    .sort((left, right) => left - right);
 }
 
 async function runMovieAutoGrabber(): Promise<number> {
@@ -119,39 +118,57 @@ async function runSeasonPackAutoGrabber(): Promise<number> {
         continue;
       }
 
-      const seasonNumber = latestRegularSeasonNumber(title);
-      if (!seasonNumber) {
+      const seasonNumbers = listRegularSeasonNumbers(title);
+      if (seasonNumbers.length === 0) {
         continue;
       }
 
-      const episodes = await fetchSeasonEpisodesByTmdbId(show.tmdbId, seasonNumber);
-      if (episodes.length === 0) {
-        continue;
+      let foundIncompleteShow = false;
+      let delayMs = 0;
+
+      for (const seasonNumber of seasonNumbers) {
+        const episodes = await fetchSeasonEpisodesByTmdbId(show.tmdbId, seasonNumber);
+        if (episodes.length === 0) {
+          continue;
+        }
+
+        const resolvedEpisodes = new Set(
+          (await listSeasonSources(show.tmdbId, seasonNumber))
+            .map((source) => source.episode_number)
+            .filter((episodeNumber): episodeNumber is number => episodeNumber !== null)
+        );
+
+        if (resolvedEpisodes.size >= episodes.length) {
+          continue;
+        }
+
+        foundIncompleteShow = true;
+
+        const target: AutomationTarget = {
+          mediaType: "tv",
+          tmdbId: show.tmdbId,
+          seasonNumber
+        };
+
+        if (await shouldSkipTarget(target)) {
+          continue;
+        }
+
+        const job = await queueSeasonAutomationTarget(show.tmdbId, seasonNumber, "auto-grabber-season-pack", {
+          startDelayMs: delayMs,
+          metadata: {
+            autoGrabberShowTitle: title.title,
+            autoGrabberSeasonOrder: seasonNumber
+          }
+        });
+        if (job) {
+          queued += 1;
+          delayMs += env.AUTO_GRAB_TV_SEASON_DELAY_MS;
+        }
       }
 
-      const resolvedEpisodes = new Set(
-        (await listSeasonSources(show.tmdbId, seasonNumber))
-          .map((source) => source.episode_number)
-          .filter((episodeNumber): episodeNumber is number => episodeNumber !== null)
-      );
-
-      if (resolvedEpisodes.size >= episodes.length) {
-        continue;
-      }
-
-      const target: AutomationTarget = {
-        mediaType: "tv",
-        tmdbId: show.tmdbId,
-        seasonNumber
-      };
-
-      if (await shouldSkipTarget(target)) {
-        continue;
-      }
-
-      const job = await queueSeasonAutomationTarget(show.tmdbId, seasonNumber, "auto-grabber-season-pack");
-      if (job) {
-        queued += 1;
+      if (foundIncompleteShow) {
+        return queued;
       }
     }
   }

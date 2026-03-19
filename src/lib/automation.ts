@@ -30,6 +30,11 @@ import type {
 const processingJobs = new Set<string>();
 let intervalHandle: NodeJS.Timeout | null = null;
 
+interface QueueAutomationOptions {
+  startDelayMs?: number;
+  metadata?: Record<string, unknown> | null;
+}
+
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -389,21 +394,44 @@ async function processDueJobs(): Promise<void> {
   await Promise.all(jobs.map(async (job) => processJob(job.id)));
 }
 
-export async function queueAutomationTarget(target: AutomationTarget, triggerSource: string): Promise<AutomationJobRow | null> {
+export async function queueAutomationTarget(
+  target: AutomationTarget,
+  triggerSource: string,
+  options?: QueueAutomationOptions
+): Promise<AutomationJobRow | null> {
   if (!automationConfigured) {
     return null;
   }
 
   const active = await getActiveAutomationJob(target);
-  const job = active ?? (await createAutomationJob(target, triggerSource));
-  void processJob(job.id);
+  const delayMs = Math.max(0, options?.startDelayMs ?? 0);
+  const scheduledFor = plusMilliseconds(delayMs);
+  const job =
+    active ??
+    (await createAutomationJob(target, triggerSource, {
+      nextAttemptAt: scheduledFor,
+      metadata:
+        delayMs > 0
+          ? {
+              ...(options?.metadata ?? {}),
+              scheduledDelayMs: delayMs,
+              scheduledFor
+            }
+          : options?.metadata ?? null
+    }));
+
+  if (delayMs === 0) {
+    void processJob(job.id);
+  }
+
   return job;
 }
 
 export async function queueSeasonAutomationTarget(
   showTmdbId: number,
   seasonNumber: number,
-  triggerSource: string
+  triggerSource: string,
+  options?: QueueAutomationOptions
 ): Promise<AutomationJobRow | null> {
   if (!automationConfigured) {
     return null;
@@ -438,7 +466,8 @@ export async function queueSeasonAutomationTarget(
       tmdbId: showTmdbId,
       seasonNumber
     },
-    triggerSource
+    triggerSource,
+    options
   );
 }
 
