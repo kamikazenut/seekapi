@@ -1,3 +1,6 @@
+import { promises as fs } from "node:fs";
+import path from "node:path";
+
 import { env } from "./config";
 import { supabase } from "./supabase";
 import type {
@@ -22,6 +25,7 @@ const ACTIVE_AUTOMATION_STATUSES: AutomationJobStatus[] = ["queued", "searching"
 const DUE_AUTOMATION_STATUSES: AutomationJobStatus[] = ["queued", "searching", "submitting", "polling"];
 const APP_SETTING_AUTO_GRAB_MOVIES = "auto_grab_movies_enabled";
 const APP_SETTING_AUTO_GRAB_SEASON_PACKS = "auto_grab_season_packs_enabled";
+const APP_SETTINGS_FILE_PATH = path.resolve(process.cwd(), ".data", "app-settings.json");
 const runtimeAppSettingOverrides = new Map<string, boolean>();
 
 function fallbackEmbedUrl(provider: Provider, providerVideoId: string): string {
@@ -32,20 +36,71 @@ function fallbackEmbedUrl(provider: Provider, providerVideoId: string): string {
   return `https://bigshare.io/embed-${providerVideoId}.html`;
 }
 
-function throwIfError(error: { message: string } | null): void {
+function formatSupabaseError(error: { message?: string | null; details?: string | null; hint?: string | null; code?: string | null } | null): string {
+  if (!error) {
+    return "";
+  }
+
+  const parts = [error.message, error.details, error.hint, error.code ? `code=${error.code}` : null]
+    .map((value) => (typeof value === "string" ? value.trim() : ""))
+    .filter(Boolean);
+
+  return parts.join(" | ");
+}
+
+function throwIfError(error: { message?: string | null; details?: string | null; hint?: string | null; code?: string | null } | null): void {
   if (error) {
-    if (/row-level security/i.test(error.message)) {
+    const formattedError = formatSupabaseError(error) || "Supabase request failed.";
+
+    if (/row-level security/i.test(formattedError)) {
       throw new Error(
-        `${error.message}. This usually means SUPABASE_SERVICE_ROLE_KEY is not a service-role or sb_secret key.`
+        `${formattedError}. This usually means SUPABASE_SERVICE_ROLE_KEY is not a service-role or sb_secret key.`
       );
     }
 
-    throw new Error(error.message);
+    throw new Error(formattedError);
   }
 }
 
-function isMissingAppSettingsTableError(error: { message: string } | null): boolean {
-  return Boolean(error && /relation\s+"?public\.app_settings"?\s+does not exist/i.test(error.message));
+function isAppSettingsStorageError(error: { message?: string | null; details?: string | null; hint?: string | null; code?: string | null } | null): boolean {
+  const formattedError = formatSupabaseError(error);
+  return Boolean(
+    formattedError &&
+      (/relation\s+"?public\.app_settings"?\s+does not exist/i.test(formattedError) ||
+        /public\.app_settings/i.test(formattedError) ||
+        (/schema cache/i.test(formattedError) && /app_settings/i.test(formattedError)))
+  );
+}
+
+async function readFileAppSettings(): Promise<Record<string, boolean>> {
+  try {
+    const raw = await fs.readFile(APP_SETTINGS_FILE_PATH, "utf8");
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.entries(parsed).filter((entry): entry is [string, boolean] => typeof entry[0] === "string" && typeof entry[1] === "boolean")
+    );
+  } catch (error) {
+    const nodeError = error as NodeJS.ErrnoException;
+    if (nodeError.code === "ENOENT") {
+      return {};
+    }
+
+    console.error("Failed reading file-backed app settings:", error);
+    return {};
+  }
+}
+
+async function readFileAppSetting(key: string): Promise<boolean | undefined> {
+  const settings = await readFileAppSettings();
+  return settings[key];
+}
+
+async function writeFileAppSetting(key: string, enabled: boolean): Promise<void> {
+  const settings = await readFileAppSettings();
+  settings[key] = enabled;
+
+  await fs.mkdir(path.dirname(APP_SETTINGS_FILE_PATH), { recursive: true });
+  await fs.writeFile(APP_SETTINGS_FILE_PATH, JSON.stringify(settings, null, 2), "utf8");
 }
 
 function normalizeTorrentHash(value: string | null | undefined): string | null {
@@ -80,12 +135,18 @@ function buildAutomationJobSelectQuery() {
 }
 
 async function getBooleanAppSetting(key: string, fallback: boolean): Promise<boolean> {
-  if (runtimeAppSettingOverrides.has(key)) {
-    return runtimeAppSettingOverrides.get(key) ?? fallback;
-  }
-
   const { data, error } = await supabase.from("app_settings").select("value").eq("key", key).maybeSingle<{ value: unknown }>();
-  if (isMissingAppSettingsTableError(error)) {
+  if (isAppSettingsStorageError(error)) {
+    const fileValue = await readFileAppSetting(key);
+    if (typeof fileValue === "boolean") {
+      runtimeAppSettingOverrides.set(key, fileValue);
+      return fileValue;
+    }
+
+    if (runtimeAppSettingOverrides.has(key)) {
+      return runtimeAppSettingOverrides.get(key) ?? fallback;
+    }
+
     return fallback;
   }
 
@@ -111,9 +172,16 @@ async function setBooleanAppSetting(key: string, enabled: boolean): Promise<void
     }
   );
 
-  if (isMissingAppSettingsTableError(error)) {
-    runtimeAppSettingOverrides.set(key, enabled);
-    return;
+  if (isAppSettingsStorageError(error)) {
+    try {
+      await writeFileAppSetting(key, enabled);
+      runtimeAppSettingOverrides.set(key, enabled);
+      return;
+    } catch (writeError) {
+      runtimeAppSettingOverrides.set(key, enabled);
+      console.error("Failed writing file-backed app settings, using in-memory override only:", writeError);
+      return;
+    }
   }
 
   throwIfError(error);
@@ -550,10 +618,13 @@ export async function getAutomationModeSettings(): Promise<AutomationModeSetting
 }
 
 export async function setAutomationModeSettings(patch: Partial<AutomationModeSettings>): Promise<AutomationModeSettings> {
-  await Promise.all([
-    patch.moviesEnabled === undefined ? Promise.resolve() : setBooleanAppSetting(APP_SETTING_AUTO_GRAB_MOVIES, patch.moviesEnabled),
-    patch.seasonPacksEnabled === undefined ? Promise.resolve() : setBooleanAppSetting(APP_SETTING_AUTO_GRAB_SEASON_PACKS, patch.seasonPacksEnabled)
-  ]);
+  if (patch.moviesEnabled !== undefined) {
+    await setBooleanAppSetting(APP_SETTING_AUTO_GRAB_MOVIES, patch.moviesEnabled);
+  }
+
+  if (patch.seasonPacksEnabled !== undefined) {
+    await setBooleanAppSetting(APP_SETTING_AUTO_GRAB_SEASON_PACKS, patch.seasonPacksEnabled);
+  }
 
   return getAutomationModeSettings();
 }

@@ -320,7 +320,15 @@ app.post(
       return;
     }
 
-    await setAutomationModeSettings(mode === "movies" ? { moviesEnabled: enabled } : { seasonPacksEnabled: enabled });
+    const settings = await setAutomationModeSettings(mode === "movies" ? { moviesEnabled: enabled } : { seasonPacksEnabled: enabled });
+    const applied = mode === "movies" ? settings.moviesEnabled : settings.seasonPacksEnabled;
+
+    if (applied !== enabled) {
+      dashboardRedirect(response, {
+        error: mode === "movies" ? "Movie auto-grabber state did not update." : "Season-pack auto-grabber state did not update."
+      });
+      return;
+    }
 
     dashboardRedirect(response, {
       notice: mode === "movies" ? `Movie auto-grabber ${enabled ? "enabled" : "disabled"}.` : `Season-pack auto-grabber ${enabled ? "enabled" : "disabled"}.`
