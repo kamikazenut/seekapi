@@ -43,6 +43,10 @@ function throwIfError(error: { message: string } | null): void {
   }
 }
 
+function isMissingAppSettingsTableError(error: { message: string } | null): boolean {
+  return Boolean(error && /relation\s+"?public\.app_settings"?\s+does not exist/i.test(error.message));
+}
+
 function normalizeTorrentHash(value: string | null | undefined): string | null {
   if (!value) {
     return null;
@@ -76,6 +80,10 @@ function buildAutomationJobSelectQuery() {
 
 async function getBooleanAppSetting(key: string, fallback: boolean): Promise<boolean> {
   const { data, error } = await supabase.from("app_settings").select("value").eq("key", key).maybeSingle<{ value: unknown }>();
+  if (isMissingAppSettingsTableError(error)) {
+    return fallback;
+  }
+
   throwIfError(error);
 
   if (!data || typeof data.value !== "object" || data.value === null || !("enabled" in data.value)) {
@@ -97,6 +105,10 @@ async function setBooleanAppSetting(key: string, enabled: boolean): Promise<void
       onConflict: "key"
     }
   );
+
+  if (isMissingAppSettingsTableError(error)) {
+    throw new Error("Supabase table public.app_settings is missing. Reapply supabase/schema.sql to enable persistent dashboard toggles.");
+  }
 
   throwIfError(error);
 }

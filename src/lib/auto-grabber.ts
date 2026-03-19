@@ -155,6 +155,8 @@ async function processAutoGrabberCycle(): Promise<void> {
     if (modes.seasonPacksEnabled) {
       await runSeasonPackAutoGrabber();
     }
+  } catch (error) {
+    console.error("Auto-grabber cycle failed:", error instanceof Error ? error.message : error);
   } finally {
     running = false;
   }
