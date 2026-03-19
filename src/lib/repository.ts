@@ -22,6 +22,7 @@ const ACTIVE_AUTOMATION_STATUSES: AutomationJobStatus[] = ["queued", "searching"
 const DUE_AUTOMATION_STATUSES: AutomationJobStatus[] = ["queued", "searching", "submitting", "polling"];
 const APP_SETTING_AUTO_GRAB_MOVIES = "auto_grab_movies_enabled";
 const APP_SETTING_AUTO_GRAB_SEASON_PACKS = "auto_grab_season_packs_enabled";
+const runtimeAppSettingOverrides = new Map<string, boolean>();
 
 function fallbackEmbedUrl(provider: Provider, providerVideoId: string): string {
   if (provider === "seekstream") {
@@ -79,6 +80,10 @@ function buildAutomationJobSelectQuery() {
 }
 
 async function getBooleanAppSetting(key: string, fallback: boolean): Promise<boolean> {
+  if (runtimeAppSettingOverrides.has(key)) {
+    return runtimeAppSettingOverrides.get(key) ?? fallback;
+  }
+
   const { data, error } = await supabase.from("app_settings").select("value").eq("key", key).maybeSingle<{ value: unknown }>();
   if (isMissingAppSettingsTableError(error)) {
     return fallback;
@@ -107,10 +112,12 @@ async function setBooleanAppSetting(key: string, enabled: boolean): Promise<void
   );
 
   if (isMissingAppSettingsTableError(error)) {
-    throw new Error("Supabase table public.app_settings is missing. Reapply supabase/schema.sql to enable persistent dashboard toggles.");
+    runtimeAppSettingOverrides.set(key, enabled);
+    return;
   }
 
   throwIfError(error);
+  runtimeAppSettingOverrides.delete(key);
 }
 
 export async function upsertTitle(title: TmdbTitleRecord): Promise<void> {

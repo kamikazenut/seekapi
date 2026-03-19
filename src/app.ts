@@ -51,6 +51,15 @@ function asyncRoute(handler: (request: Request, response: Response) => Promise<v
   };
 }
 
+function asyncDashboardRoute(handler: (request: Request, response: Response) => Promise<void>) {
+  return (request: Request, response: Response) => {
+    handler(request, response).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : "Dashboard action failed.";
+      dashboardRedirect(response, { error: message });
+    });
+  };
+}
+
 function requireCallbackAuth(request: Request): void {
   if (!env.CALLBACK_AUTH_TOKEN) {
     return;
@@ -264,6 +273,14 @@ app.get("/", (_request, response) => {
   response.redirect("/dashboard");
 });
 
+app.get("/dashboard/actions/settings/automation-mode", (_request, response) => {
+  response.redirect("/dashboard");
+});
+
+app.get("/dashboard/actions/automation/:target", (_request, response) => {
+  response.redirect("/dashboard");
+});
+
 app.get(
   "/dashboard",
   asyncRoute(async (request, response) => {
@@ -294,7 +311,7 @@ app.get(
 
 app.post(
   "/dashboard/actions/settings/automation-mode",
-  asyncRoute(async (request, response) => {
+  asyncDashboardRoute(async (request, response) => {
     const mode = getSingleBodyValue(request.body.mode, "mode");
     const enabled = getSingleBodyValue(request.body.enabled, "enabled") === "true";
 
@@ -313,7 +330,7 @@ app.post(
 
 app.post(
   "/dashboard/actions/automation/movie",
-  asyncRoute(async (request, response) => {
+  asyncDashboardRoute(async (request, response) => {
     if (!automationConfigured) {
       dashboardRedirect(response, { error: "Automation is not configured yet." });
       return;
@@ -339,7 +356,7 @@ app.post(
 
 app.post(
   "/dashboard/actions/automation/season",
-  asyncRoute(async (request, response) => {
+  asyncDashboardRoute(async (request, response) => {
     if (!automationConfigured) {
       dashboardRedirect(response, { error: "Automation is not configured yet." });
       return;
@@ -362,7 +379,7 @@ app.post(
 
 app.post(
   "/dashboard/actions/automation/tv",
-  asyncRoute(async (request, response) => {
+  asyncDashboardRoute(async (request, response) => {
     if (!automationConfigured) {
       dashboardRedirect(response, { error: "Automation is not configured yet." });
       return;
