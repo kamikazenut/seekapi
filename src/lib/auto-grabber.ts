@@ -3,6 +3,7 @@ import { queueAutomationTarget, queueSeasonAutomationTarget } from "./automation
 import { containsAdultTerms, isAdultTmdbMetadata } from "./content-safety";
 import {
   getAutomationModeSettings,
+  getLatestSeasonAutoGrabberShowTmdbId,
   getLatestAutomationJobForTarget,
   listMovieSources,
   listSeasonSources
@@ -18,6 +19,14 @@ let lastQueuedMovies = 0;
 let lastQueuedSeasonPacks = 0;
 let lastError: string | null = null;
 let inflightCycle: Promise<AutoGrabberStatus> | null = null;
+let seasonFollowUpHandle: NodeJS.Timeout | null = null;
+let seasonShowLockTmdbId: number | null = null;
+
+interface SeasonAutoGrabberCandidate {
+  tmdbId: number;
+  title: TmdbTitleRecord;
+  unresolvedSeasonNumbers: number[];
+}
 
 function hasReleased(releaseDate: string | null | undefined): boolean {
   if (!releaseDate) {
@@ -29,6 +38,26 @@ function hasReleased(releaseDate: string | null | undefined): boolean {
 
 function isRecentlyAttempted(updatedAt: string): boolean {
   return Date.now() - new Date(updatedAt).getTime() < env.AUTO_GRAB_REQUEUE_HOURS * 60 * 60 * 1000;
+}
+
+function clearSeasonFollowUpTimer(): void {
+  if (!seasonFollowUpHandle) {
+    return;
+  }
+
+  clearTimeout(seasonFollowUpHandle);
+  seasonFollowUpHandle = null;
+}
+
+function scheduleSeasonFollowUpCycle(delayMs: number): void {
+  if (delayMs <= 0 || !automationConfigured || !tmdbConfigured || seasonFollowUpHandle) {
+    return;
+  }
+
+  seasonFollowUpHandle = setTimeout(() => {
+    seasonFollowUpHandle = null;
+    void triggerAutoGrabberCycle();
+  }, delayMs);
 }
 
 async function shouldSkipTarget(target: AutomationTarget): Promise<boolean> {
@@ -70,6 +99,107 @@ function listRegularSeasonNumbers(title: TmdbTitleRecord): number[] {
     .sort((left, right) => left - right);
 }
 
+async function listUnresolvedSeasonNumbers(showTmdbId: number, title: TmdbTitleRecord): Promise<number[]> {
+  const seasonNumbers = listRegularSeasonNumbers(title);
+  const unresolvedSeasonNumbers: number[] = [];
+
+  for (const seasonNumber of seasonNumbers) {
+    const episodes = await fetchSeasonEpisodesByTmdbId(showTmdbId, seasonNumber);
+    if (episodes.length === 0) {
+      continue;
+    }
+
+    const resolvedEpisodes = new Set(
+      (await listSeasonSources(showTmdbId, seasonNumber))
+        .map((source) => source.episode_number)
+        .filter((episodeNumber): episodeNumber is number => episodeNumber !== null)
+    );
+
+    if (resolvedEpisodes.size >= episodes.length) {
+      continue;
+    }
+
+    unresolvedSeasonNumbers.push(seasonNumber);
+  }
+
+  return unresolvedSeasonNumbers;
+}
+
+async function buildSeasonAutoGrabberCandidate(showTmdbId: number): Promise<SeasonAutoGrabberCandidate | null> {
+  const title = await fetchTitleByTmdbId("tv", showTmdbId);
+  if (!title || isAdultTmdbMetadata(title.metadata) || containsAdultTerms(title.title, title.originalTitle)) {
+    return null;
+  }
+
+  const unresolvedSeasonNumbers = await listUnresolvedSeasonNumbers(showTmdbId, title);
+  if (unresolvedSeasonNumbers.length === 0) {
+    return null;
+  }
+
+  return {
+    tmdbId: showTmdbId,
+    title,
+    unresolvedSeasonNumbers
+  };
+}
+
+async function pickLockedSeasonAutoGrabberCandidate(): Promise<SeasonAutoGrabberCandidate | null> {
+  const candidateTmdbIds = new Set<number>();
+  if (seasonShowLockTmdbId) {
+    candidateTmdbIds.add(seasonShowLockTmdbId);
+  }
+
+  const recentTmdbId = await getLatestSeasonAutoGrabberShowTmdbId();
+  if (recentTmdbId) {
+    candidateTmdbIds.add(recentTmdbId);
+  }
+
+  for (const tmdbId of candidateTmdbIds) {
+    const candidate = await buildSeasonAutoGrabberCandidate(tmdbId);
+    if (candidate) {
+      seasonShowLockTmdbId = tmdbId;
+      return candidate;
+    }
+  }
+
+  seasonShowLockTmdbId = null;
+  return null;
+}
+
+async function queueNextSeasonForShow(candidate: SeasonAutoGrabberCandidate): Promise<number> {
+  for (let index = 0; index < candidate.unresolvedSeasonNumbers.length; index += 1) {
+    const seasonNumber = candidate.unresolvedSeasonNumbers[index];
+    const target: AutomationTarget = {
+      mediaType: "tv",
+      tmdbId: candidate.tmdbId,
+      seasonNumber
+    };
+
+    if (await shouldSkipTarget(target)) {
+      continue;
+    }
+
+    const job = await queueSeasonAutomationTarget(candidate.tmdbId, seasonNumber, "auto-grabber-season-pack", {
+      metadata: {
+        autoGrabberShowTitle: candidate.title.title,
+        autoGrabberSeasonOrder: seasonNumber
+      }
+    });
+
+    if (!job) {
+      return 0;
+    }
+
+    if (candidate.unresolvedSeasonNumbers.slice(index + 1).length > 0) {
+      scheduleSeasonFollowUpCycle(env.AUTO_GRAB_TV_SEASON_DELAY_MS);
+    }
+
+    return 1;
+  }
+
+  return 0;
+}
+
 async function runMovieAutoGrabber(): Promise<number> {
   let queued = 0;
 
@@ -104,7 +234,10 @@ async function runMovieAutoGrabber(): Promise<number> {
 }
 
 async function runSeasonPackAutoGrabber(): Promise<number> {
-  let queued = 0;
+  const lockedCandidate = await pickLockedSeasonAutoGrabberCandidate();
+  if (lockedCandidate) {
+    return queueNextSeasonForShow(lockedCandidate);
+  }
 
   for (let page = 1; page <= env.AUTO_GRAB_TV_PAGES; page += 1) {
     const shows = await fetchPopularShows(page);
@@ -113,67 +246,18 @@ async function runSeasonPackAutoGrabber(): Promise<number> {
         continue;
       }
 
-      const title = await fetchTitleByTmdbId("tv", show.tmdbId);
-      if (!title || isAdultTmdbMetadata(title.metadata) || containsAdultTerms(title.title, title.originalTitle)) {
+      const candidate = await buildSeasonAutoGrabberCandidate(show.tmdbId);
+      if (!candidate) {
         continue;
       }
 
-      const seasonNumbers = listRegularSeasonNumbers(title);
-      if (seasonNumbers.length === 0) {
-        continue;
-      }
-
-      let foundIncompleteShow = false;
-      let delayMs = 0;
-
-      for (const seasonNumber of seasonNumbers) {
-        const episodes = await fetchSeasonEpisodesByTmdbId(show.tmdbId, seasonNumber);
-        if (episodes.length === 0) {
-          continue;
-        }
-
-        const resolvedEpisodes = new Set(
-          (await listSeasonSources(show.tmdbId, seasonNumber))
-            .map((source) => source.episode_number)
-            .filter((episodeNumber): episodeNumber is number => episodeNumber !== null)
-        );
-
-        if (resolvedEpisodes.size >= episodes.length) {
-          continue;
-        }
-
-        foundIncompleteShow = true;
-
-        const target: AutomationTarget = {
-          mediaType: "tv",
-          tmdbId: show.tmdbId,
-          seasonNumber
-        };
-
-        if (await shouldSkipTarget(target)) {
-          continue;
-        }
-
-        const job = await queueSeasonAutomationTarget(show.tmdbId, seasonNumber, "auto-grabber-season-pack", {
-          startDelayMs: delayMs,
-          metadata: {
-            autoGrabberShowTitle: title.title,
-            autoGrabberSeasonOrder: seasonNumber
-          }
-        });
-        if (job) {
-          queued += 1;
-          delayMs += env.AUTO_GRAB_TV_SEASON_DELAY_MS;
-        }
-      }
-
-      if (foundIncompleteShow) {
-        return queued;
-      }
+      seasonShowLockTmdbId = show.tmdbId;
+      return queueNextSeasonForShow(candidate);
     }
   }
 
-  return queued;
+  seasonShowLockTmdbId = null;
+  return 0;
 }
 
 export function getAutoGrabberStatus(): AutoGrabberStatus {
@@ -202,6 +286,7 @@ export function triggerAutoGrabberCycle(): Promise<AutoGrabberStatus> {
       return getAutoGrabberStatus();
     }
 
+    clearSeasonFollowUpTimer();
     running = true;
     lastStartedAt = new Date().toISOString();
     lastError = null;

@@ -14,7 +14,7 @@ It also includes a dashboard and automatic acquisition flow.
 It now also includes a TMDB auto-grabber. When enabled from the dashboard, the service periodically scans TMDB popular pages and queues jobs by itself:
 
 - movie auto-grabber: popular released movies
-- season-pack auto-grabber: the latest aired regular season for popular TV shows
+- season-pack auto-grabber: all aired regular seasons for one show at a time, queued one season per pass with a delay between additions
 
 The default automation pipeline is:
 
@@ -143,6 +143,7 @@ Automation:
 - `AUTO_GRAB_INTERVAL_MS`
 - `AUTO_GRAB_MOVIE_PAGES`
 - `AUTO_GRAB_TV_PAGES`
+- `AUTO_GRAB_TV_SEASON_DELAY_MS`
 - `AUTO_GRAB_REQUEUE_HOURS`
 - `AUTOMATION_POLL_INTERVAL_MS`
 - `AUTOMATION_RETRY_MINUTES`

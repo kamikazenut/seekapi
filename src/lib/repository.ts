@@ -613,6 +613,23 @@ export async function listRecentAutomationJobs(limit = 20): Promise<AutomationJo
   return data ?? [];
 }
 
+export async function getLatestSeasonAutoGrabberShowTmdbId(): Promise<number | null> {
+  const { data, error } = await supabase
+    .from("automation_jobs")
+    .select("tmdb_id")
+    .eq("media_type", "tv")
+    .eq("trigger_source", "auto-grabber-season-pack")
+    .not("season_number", "is", null)
+    .is("episode_number", null)
+    .order("updated_at", { ascending: false })
+    .limit(25)
+    .returns<Array<{ tmdb_id: number | null }>>();
+
+  throwIfError(error);
+
+  return (data ?? []).find((row) => typeof row.tmdb_id === "number" && row.tmdb_id > 0)?.tmdb_id ?? null;
+}
+
 export async function getAutomationModeSettings(): Promise<AutomationModeSettings> {
   const [moviesEnabled, seasonPacksEnabled] = await Promise.all([
     getBooleanAppSetting(APP_SETTING_AUTO_GRAB_MOVIES, env.AUTOMATION_AUTO_MOVIES),
