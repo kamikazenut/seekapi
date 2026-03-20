@@ -632,7 +632,7 @@ export function renderDashboardPage(params: DashboardPageParams): string {
 
           <article class="card section">
             <h2>Auto Notes</h2>
-            <p>Automatic mode is driven by the embed routes. Movie misses respect the movie auto toggle. TV episode misses can either queue a single episode job or, when season-pack auto mode is on, queue a whole-season job instead.</p>
+            <p>Embed misses now auto-queue whenever automation is configured. Missing movies queue a movie job, and missing TV episodes queue the season pack for that season. The dashboard toggles only control the background TMDB auto-grabber.</p>
             <p class="footer-note">This dashboard is server-rendered inside the same Node service, so there is no separate frontend build step.</p>
           </article>
         </div>

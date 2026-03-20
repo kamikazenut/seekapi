@@ -632,15 +632,12 @@ app.get(
   "/embed/movie/:tmdbId",
   asyncRoute(async (request, response) => {
     const tmdbId = parsePositiveInt(getSingleParam(request.params.tmdbId, "tmdbId"), "tmdbId");
-    const automationModes = await getAutomationModeSettings();
     const title = await hydrateTitle("movie", tmdbId);
     const source = pickBestSource(await listMovieSources(tmdbId));
     const blocked = title ? isAdultTmdbMetadata(title.metadata) || containsAdultTerms(title.title, title.original_title) : false;
     const job = source
       ? null
       : blocked
-        ? null
-        : !automationModes.moviesEnabled
         ? null
         : await queueAutomationTarget(
           {
@@ -681,7 +678,6 @@ app.get(
     const tmdbId = parsePositiveInt(getSingleParam(request.params.tmdbId, "tmdbId"), "tmdbId");
     const seasonNumber = parsePositiveInt(getSingleParam(request.params.season, "season"), "season");
     const episodeNumber = parsePositiveInt(getSingleParam(request.params.episode, "episode"), "episode");
-    const automationModes = await getAutomationModeSettings();
     const title = await hydrateTitle("tv", tmdbId);
     const episode = await hydrateEpisode(tmdbId, seasonNumber, episodeNumber);
     const source = pickBestSource(await listEpisodeSources(tmdbId, seasonNumber, episodeNumber));
@@ -690,17 +686,7 @@ app.get(
       ? null
       : blocked
         ? null
-        : automationModes.seasonPacksEnabled
-          ? await queueSeasonAutomationTarget(tmdbId, seasonNumber, "embed-season")
-          : await queueAutomationTarget(
-            {
-              mediaType: "tv",
-              tmdbId,
-              seasonNumber,
-              episodeNumber
-            },
-            "embed"
-          );
+        : await queueSeasonAutomationTarget(tmdbId, seasonNumber, "embed-season");
 
     response
       .status(source ? 200 : 404)
