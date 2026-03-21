@@ -11,6 +11,9 @@ SEEK_API_BASE="https://seekstreaming.com"
 BIG_TOKEN="nDvwP7Kp0w1YBj2ZAG5x"
 LOG_FILE="${HOME}/combined_upload.log"
 LOCK_FILE="/tmp/upload_queue.lock"
+QUEUE_WAIT_SECONDS=14400
+SEEK_POLL_ATTEMPTS=90
+SEEK_POLL_INTERVAL_SECONDS=20
 
 BIG_CALLBACK_URL="https://fmoviez.online/v1/callbacks/bigshare"
 SEEK_CALLBACK_URL="https://fmoviez.online/v1/callbacks/seekstream"
@@ -39,8 +42,8 @@ TORRENT_HASH="${3:-}"
 # --- QUEUE SYSTEM ---
 exec 200>$LOCK_FILE
 log "Queue: $TORRENT_NAME is checking the line..."
-if ! flock -x -w 14400 200; then
-  log "Queue ERROR: $TORRENT_NAME timed out (4 hours). Skipping."
+if ! flock -x -w "$QUEUE_WAIT_SECONDS" 200; then
+  log "Queue ERROR: $TORRENT_NAME timed out after ${QUEUE_WAIT_SECONDS}s. Skipping."
   exit 1
 fi
 
@@ -75,9 +78,11 @@ upload_seek() {
   local task_id=$(python3 -c 'import json,sys; d=json.loads(sys.stdin.read() or "{}"); print(d.get("id") or d.get("data",{}).get("id") or "")' <<< "$resp")
   [[ -z "$task_id" ]] && { log "Seek ERROR for $clean_name: $resp"; return 0; }
 
-  for i in {1..90}; do
+  for ((i=1; i<=SEEK_POLL_ATTEMPTS; i++)); do
     local status_json=$(curl -sL --max-time 20 -H "api-token: ${SEEK_API_TOKEN}" "${SEEK_API_BASE}/api/v1/video/advance-upload/${task_id}")
     local id=$(python3 -c 'import json,sys; d=json.loads(sys.stdin.read() or "{}"); vids=d.get("videos") or d.get("data",{}).get("videos") or []; print(vids[0] if isinstance(vids,list) and vids else "")' <<< "$status_json")
+    local status=$(python3 -c 'import json,sys; d=json.loads(sys.stdin.read() or "{}"); root=d.get("data") or d; print((root.get("status") or "").strip())' <<< "$status_json")
+    local error=$(python3 -c 'import json,sys; d=json.loads(sys.stdin.read() or "{}"); root=d.get("data") or d; print((root.get("error") or "").strip())' <<< "$status_json")
     if [[ -n "$id" ]]; then
       local embed="https://321movies.embedseek.xyz/#$id"
       local payload=$(python3 -c "import json,sys; print(json.dumps({'torrentHash': sys.argv[1], 'torrentName': sys.argv[2], 'contentPath': sys.argv[3], 'fileCode': sys.argv[4], 'embedUrl': sys.argv[5]}))" "$TORRENT_HASH" "$TORRENT_NAME" "$target_file" "$id" "$embed")
@@ -85,8 +90,18 @@ upload_seek() {
       log "Seek success for $clean_name: $id"
       return 0
     fi
-    sleep 20
+
+    local status_lc=$(echo "$status" | tr '[:upper:]' '[:lower:]')
+    if [[ -n "$error" || "$status_lc" == *fail* || "$status_lc" == *error* ]]; then
+      log "Seek FAIL for $clean_name: status=${status:-unknown} error=${error:-none}"
+      return 0
+    fi
+
+    sleep "$SEEK_POLL_INTERVAL_SECONDS"
   done
+
+  log "Seek TIMEOUT for $clean_name after $((SEEK_POLL_ATTEMPTS * SEEK_POLL_INTERVAL_SECONDS))s without a video id."
+  return 0
 }
 
 # --- IMPROVED FILTERING ---

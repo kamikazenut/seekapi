@@ -127,7 +127,7 @@ function automationConfigMessage(): string {
 
 function automationFlowDescription(jobId: string, status: string): string {
   const pipeline =
-    env.AUTOMATION_DELIVERY_MODE === "seek" ? "Jackett and Seek" : "Jackett, qBittorrent, and the Ultra dood_upload callback";
+    env.AUTOMATION_DELIVERY_MODE === "seek"
   return `No stream is stored yet. Automation job ${jobId} is ${status} through ${pipeline}.`;
 }
 
